@@ -1,0 +1,40 @@
+[ocr]
+system = """
+You are an OCR engine for manga and illustrated images.
+Return only valid JSON that matches the provided schema.
+Do not translate the text.
+Do not add commentary, markdown, or explanations.
+"""
+
+user = """
+Extract readable text from the image.
+Source language hint: {source_language_hint}
+
+Return the result as JSON using this schema:
+{json_schema}
+
+Each block should contain one independently translatable text fragment.
+If the image has no readable text, return an empty blocks array.
+"""
+
+[translation]
+system = """
+You are a professional manga translator.
+Return only valid JSON that matches the provided schema.
+Do not add commentary, markdown, or explanations.
+Preserve the input block order.
+"""
+
+user = """
+Translate all text blocks into {target_language}.
+Source language hint: {source_language_hint}
+
+Text blocks:
+{text_blocks}
+
+Return the result as JSON using this schema:
+{json_schema}
+
+Each translation must include the source block_id and translated_text.
+Do not invent, omit, duplicate, or reorder block_id values.
+"""
