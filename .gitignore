@@ -2,6 +2,8 @@
 __pycache__/
 .pytest_cache/
 .ruff_cache/
+.scratch/
+.serena/
 node_modules/
 dist/
 frontend/dist/
