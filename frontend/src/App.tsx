@@ -12,7 +12,16 @@ type ApiError = {
     code?: string;
     stage?: string;
     message: string;
+    details?: {
+      reason?: unknown;
+      raw_model_response?: unknown;
+      raw_model_response_truncated?: unknown;
+    };
   };
+};
+
+type DebuggableError = Error & {
+  debugOutput?: string;
 };
 
 type PromptTemplates = {
@@ -196,6 +205,17 @@ function isTranslationResponse(
   );
 }
 
+function createApiError(payload: ApiError, fallbackMessage: string): DebuggableError {
+  const error = new Error(payload.error.message || fallbackMessage) as DebuggableError;
+  if (typeof payload.error.details?.raw_model_response === "string") {
+    error.debugOutput = payload.error.details.raw_model_response;
+    if (payload.error.details.raw_model_response_truncated === true) {
+      error.debugOutput += "\n\n[輸出已截斷]";
+    }
+  }
+  return error;
+}
+
 export default function App() {
   const persistedTaskSettings = useRef(readPersistedTaskSettings()).current;
   const [ollamaBaseUrl, setOllamaBaseUrl] = useState(
@@ -244,6 +264,9 @@ export default function App() {
   >("idle");
   const [ocrErrorMessage, setOcrErrorMessage] = useState<string | null>(null);
   const [translationErrorMessage, setTranslationErrorMessage] = useState<string | null>(null);
+  const [translationErrorDebugOutput, setTranslationErrorDebugOutput] = useState<string | null>(
+    null
+  );
   const [ocrBlocks, setOcrBlocks] = useState<TextBlock[]>([]);
   const [translations, setTranslations] = useState<Translation[]>([]);
   const [ocrPrompt, setOcrPrompt] = useState<RenderedPrompt | null>(null);
@@ -277,6 +300,7 @@ export default function App() {
 
       setTaskStatus("translation_running");
       setTranslationErrorMessage(null);
+      setTranslationErrorDebugOutput(null);
       setTranslations([]);
       setTranslationPrompt(null);
       setLastTaskSettings(requestSettings);
@@ -298,7 +322,7 @@ export default function App() {
         .then(async (response) => {
           const payload = (await response.json()) as TranslationResponse | ApiError;
           if (!response.ok || "error" in payload) {
-            throw new Error("error" in payload ? payload.error.message : "翻譯失敗");
+            throw "error" in payload ? createApiError(payload, "翻譯失敗") : new Error("翻譯失敗");
           }
           if (!isTranslationResponse(payload)) {
             throw new Error("翻譯回應格式不符合預期");
@@ -316,7 +340,7 @@ export default function App() {
           setTranslationPrompt(payload.prompt);
           setTaskStatus("completed");
         })
-        .catch((error: Error) => {
+        .catch((error: DebuggableError) => {
           if (
             runId !== latestOcrRunId.current ||
             translationRunId !== latestTranslationRunId.current
@@ -327,6 +351,7 @@ export default function App() {
             return;
           }
           setTranslationErrorMessage(error.message);
+          setTranslationErrorDebugOutput(error.debugOutput ?? null);
           setTaskStatus("translation_failed");
         })
         .finally(() => {
@@ -371,6 +396,7 @@ export default function App() {
       setTaskStatus("ocr_running");
       setOcrErrorMessage(null);
       setTranslationErrorMessage(null);
+      setTranslationErrorDebugOutput(null);
       setOcrBlocks([]);
       setTranslations([]);
       setOcrPrompt(null);
@@ -492,6 +518,7 @@ export default function App() {
     setLastTaskSettings(null);
     setOcrErrorMessage(null);
     setTranslationErrorMessage(null);
+    setTranslationErrorDebugOutput(null);
 
     if (!file) {
       setImageFile(null);
@@ -602,6 +629,7 @@ export default function App() {
     setTranslations([]);
     setOcrErrorMessage(null);
     setTranslationErrorMessage(null);
+    setTranslationErrorDebugOutput(null);
     setTaskStatus("ocr_cancelled");
   };
 
@@ -616,6 +644,7 @@ export default function App() {
     setTranslations([]);
     setTranslationPrompt(null);
     setTranslationErrorMessage(null);
+    setTranslationErrorDebugOutput(null);
     setTaskStatus("translation_cancelled");
   };
 
@@ -924,6 +953,12 @@ export default function App() {
             <p>翻譯失敗</p>
             {translationErrorMessage ? (
               <p className="error-message">{translationErrorMessage}</p>
+            ) : null}
+            {translationErrorDebugOutput ? (
+              <details className="debug-output" open>
+                <summary>模型原始輸出</summary>
+                <pre>{translationErrorDebugOutput}</pre>
+              </details>
             ) : null}
           </>
         ) : null}

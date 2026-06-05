@@ -534,6 +534,7 @@ def test_translate_route_rejects_invalid_ollama_response_json(tmp_path: Path) ->
     assert response.status_code == 502
     assert response.json()["error"]["code"] == "invalid_model_json"
     assert response.json()["error"]["stage"] == "translation"
+    assert response.json()["error"]["details"]["raw_model_response"] == "not json"
 
 
 def test_translate_route_returns_timeout_error_envelope(tmp_path: Path) -> None:

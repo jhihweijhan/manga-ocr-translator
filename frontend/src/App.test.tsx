@@ -1937,7 +1937,10 @@ describe("App", () => {
                 code: "invalid_model_json",
                 stage: "translation",
                 message: "Model response did not match the expected JSON schema.",
-                details: {}
+                details: {
+                  reason: "Expecting value: line 1 column 1 (char 0)",
+                  raw_model_response: "not json\nmodel returned plain text"
+                }
               }
             }),
             { status: 502, headers: { "Content-Type": "application/json" } }
@@ -1973,6 +1976,8 @@ describe("App", () => {
 
     expect(await screen.findByText("翻譯失敗")).toBeInTheDocument();
     expect(screen.getByText("Model response did not match the expected JSON schema.")).toBeInTheDocument();
+    expect(screen.getByText("模型原始輸出")).toBeInTheDocument();
+    expect(screen.getByText(/model returned plain text/)).toBeInTheDocument();
     expect(screen.getByText("こんにちは")).toBeInTheDocument();
     expect(screen.getByText("尚未翻譯")).toBeInTheDocument();
   });

@@ -245,29 +245,42 @@ def _parse_translations(
     try:
         payload = json.loads(response_text)
     except json.JSONDecodeError as exc:
-        raise _invalid_translation_json(str(exc)) from exc
+        raise _invalid_translation_json(str(exc), raw_model_response=response_text) from exc
 
     if not isinstance(payload, dict) or not isinstance(payload.get("translations"), list):
-        raise _invalid_translation_json("Expected object with translations array.")
+        raise _invalid_translation_json(
+            "Expected object with translations array.", raw_model_response=response_text
+        )
 
     block_ids = [block.id for block in blocks]
     expected_block_ids = set(block_ids)
     if len(payload["translations"]) != len(block_ids):
-        raise _invalid_translation_json("Translation count must match input text block count.")
+        raise _invalid_translation_json(
+            "Translation count must match input text block count.",
+            raw_model_response=response_text,
+        )
     by_block_id: dict[str, str] = {}
     for translation in payload["translations"]:
         if not isinstance(translation, dict):
-            raise _invalid_translation_json("Each translation must be an object.")
+            raise _invalid_translation_json(
+                "Each translation must be an object.", raw_model_response=response_text
+            )
         block_id = translation.get("block_id")
         translated_text = translation.get("translated_text")
         if not isinstance(block_id, str) or not isinstance(translated_text, str):
             raise _invalid_translation_json(
-                "Each translation must include block_id and translated_text."
+                "Each translation must include block_id and translated_text.",
+                raw_model_response=response_text,
             )
         if block_id in by_block_id:
-            raise _invalid_translation_json("Translation block_id values must be unique.")
+            raise _invalid_translation_json(
+                "Translation block_id values must be unique.", raw_model_response=response_text
+            )
         if block_id not in expected_block_ids:
-            raise _invalid_translation_json("Translation block_id must match an input text block.")
+            raise _invalid_translation_json(
+                "Translation block_id must match an input text block.",
+                raw_model_response=response_text,
+            )
         by_block_id[block_id] = translated_text
 
     return [
@@ -275,11 +288,16 @@ def _parse_translations(
     ]
 
 
-def _invalid_translation_json(reason: str):
+def _invalid_translation_json(reason: str, raw_model_response: str | None = None):
+    details: dict[str, Any] = {"reason": reason}
+    if raw_model_response is not None:
+        max_debug_chars = 8000
+        details["raw_model_response"] = raw_model_response[:max_debug_chars]
+        details["raw_model_response_truncated"] = len(raw_model_response) > max_debug_chars
     return api_error(
         status_code=502,
         code="invalid_model_json",
         stage="translation",
         message="Model response did not match the expected JSON schema.",
-        details={"reason": reason},
+        details=details,
     )
