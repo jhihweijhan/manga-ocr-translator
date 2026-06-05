@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { CSSProperties } from "react";
 
 const DEFAULT_OLLAMA_BASE_URL = "http://127.0.0.1:11434";
 
@@ -92,6 +93,28 @@ const SOURCE_LANGUAGE_OPTIONS = ["自動判斷", "日文", "英文", "韓文", "
 const TARGET_LANGUAGE_OPTIONS = ["繁體中文", "簡體中文", "英文", "日文", "韓文"];
 const SETTINGS_STORAGE_KEY = "manga-ocr-translator-settings";
 const SETTINGS_STORAGE_VERSION = 2;
+const THEME_STORAGE_KEY = "manga-ocr-translator-theme";
+
+type ThemeMode = "light" | "dark";
+
+function readInitialTheme(): ThemeMode {
+  try {
+    const stored = localStorage.getItem(THEME_STORAGE_KEY);
+    if (stored === "light" || stored === "dark") {
+      return stored;
+    }
+  } catch {
+    // ignore unreadable storage
+  }
+  if (
+    typeof window !== "undefined" &&
+    typeof window.matchMedia === "function" &&
+    window.matchMedia("(prefers-color-scheme: dark)").matches
+  ) {
+    return "dark";
+  }
+  return "light";
+}
 
 function isOcrPromptMode(value: unknown): value is OcrPromptMode {
   return value === "auto" || value === "direct" || value === "prompted";
@@ -279,6 +302,22 @@ export default function App() {
   const activeOcrAbortController = useRef<AbortController | null>(null);
   const activeTranslationAbortController = useRef<AbortController | null>(null);
   const isProcessing = taskStatus === "ocr_running" || taskStatus === "translation_running";
+  const [theme, setTheme] = useState<ThemeMode>(readInitialTheme);
+  const [isDragging, setIsDragging] = useState(false);
+  const [imageZoom, setImageZoom] = useState(1);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    try {
+      localStorage.setItem(THEME_STORAGE_KEY, theme);
+    } catch {
+      // ignore unwritable storage
+    }
+  }, [theme]);
+
+  useEffect(() => {
+    setImageZoom(1);
+  }, [imagePreviewUrl]);
 
   const startTranslation = useCallback(
     (runId: number, blocks: TextBlock[], translationModel: string, ocrModel: string) => {
@@ -706,6 +745,21 @@ export default function App() {
     (taskStatus === "completed" ||
       taskStatus === "translation_cancelled" ||
       taskStatus === "translation_failed");
+  const readingImageStyle = { "--reading-zoom": imageZoom } as CSSProperties;
+  const canZoomOut = imageZoom > 0.75;
+  const canZoomIn = imageZoom < 3;
+  const handleZoomOut = () => {
+    setImageZoom((currentZoom) => Math.max(0.75, Number((currentZoom - 0.25).toFixed(2))));
+  };
+  const handleZoomIn = () => {
+    setImageZoom((currentZoom) => Math.min(3, Number((currentZoom + 0.25).toFixed(2))));
+  };
+  const handleOpenOriginalImage = () => {
+    if (!imagePreviewUrl) {
+      return;
+    }
+    window.open(imagePreviewUrl, "_blank", "noopener,noreferrer");
+  };
 
   useEffect(() => {
     loadModelsFor(initialOllamaBaseUrl.current);
@@ -768,319 +822,483 @@ export default function App() {
   return (
     <main>
       <header className="app-header">
-        <div>
-          <h1>漫畫翻譯神器</h1>
-          <p className="status">本機 Ollama 模型與提示詞檢視</p>
+        <div className="wordmark">
+          <span className="wordmark-stamp">漫畫翻譯神器</span>
+          <p className="wordmark-sub">本機 Ollama OCR 翻譯，圖片不離開你的電腦</p>
         </div>
+        <button
+          type="button"
+          className="theme-toggle"
+          onClick={() => setTheme((current) => (current === "dark" ? "light" : "dark"))}
+          aria-label={theme === "dark" ? "切換到淺色主題" : "切換到深色主題"}
+        >
+          {theme === "dark" ? "☀ 淺色" : "☾ 深色"}
+        </button>
       </header>
 
-      <div className="settings-row">
-        <div className="field">
-          <label htmlFor="ollama-base-url">Ollama 位址</label>
-          <input
-            disabled={isProcessing}
-            id="ollama-base-url"
-            value={ollamaBaseUrl}
-            onChange={(event) => setOllamaBaseUrl(event.target.value)}
-          />
-        </div>
-        <button type="button" disabled={isProcessing} onClick={() => loadModelsFor(ollamaBaseUrl)}>
-          重新整理模型清單
-        </button>
-      </div>
-
-      <section aria-labelledby="task-settings-heading">
-        <h2 id="task-settings-heading">OCR 任務設定</h2>
-        <div className="task-settings-grid">
-          <div className="field">
-            <label htmlFor="ocr-model">OCR 模型</label>
-            <select
-              disabled={isProcessing}
-              id="ocr-model"
-              value={selectedOcrModel}
-              onChange={(event) => handleOcrModelChange(event.target.value)}
-            >
-              <option value="">請選擇 OCR 模型</option>
-              {models.map((model) => (
-                <option key={model.name} value={model.name}>
-                  OCR：{model.name}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="field">
-            <label htmlFor="translation-model">翻譯模型</label>
-            <select
-              disabled={isProcessing}
-              id="translation-model"
-              value={selectedTranslationModel}
-              onChange={(event) => handleTranslationModelChange(event.target.value)}
-            >
-              <option value="">請選擇翻譯模型</option>
-              {models.map((model) => (
-                <option key={model.name} value={model.name}>
-                  翻譯：{model.name}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="field">
-            <label htmlFor="ocr-prompt-mode">OCR 提示詞模式</label>
-            <select
-              disabled={isProcessing}
-              id="ocr-prompt-mode"
-              value={ocrPromptMode}
-              onChange={(event) => setOcrPromptMode(event.target.value as OcrPromptMode)}
-            >
-              <option value="auto">自動：依模型選擇</option>
-              <option value="direct">直接圖片，不套用提示詞模板</option>
-              <option value="prompted">使用 OCR 提示詞與 JSON 格式</option>
-            </select>
-            <p className="field-help">自動模式會讓 glm-ocr 直接辨識，其他模型使用 JSON schema</p>
-          </div>
-          <div className="field">
-            <label htmlFor="translation-prompt-mode">翻譯提示詞模式</label>
-            <select
-              disabled={isProcessing}
-              id="translation-prompt-mode"
-              value={translationPromptMode}
-              onChange={(event) => setTranslationPromptMode(event.target.value as TranslationPromptMode)}
-            >
-              <option value="prompted">使用翻譯提示詞與 block 對齊</option>
-              <option value="direct">直接文字，不套用提示詞模板</option>
-            </select>
-            <p className="field-help">一般翻譯模型建議開啟；關閉時模型仍需回傳 block_id JSON</p>
-          </div>
-          <div className="field">
-            <label htmlFor="source-language-hint">來源語言提示</label>
-            <select
-              disabled={isProcessing}
-              id="source-language-hint"
-              value={sourceLanguageHint}
-              onChange={(event) => setSourceLanguageHint(event.target.value)}
-            >
-              {SOURCE_LANGUAGE_OPTIONS.map((language) => (
-                <option key={language} value={language}>
-                  {language}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="field">
-            <label htmlFor="target-language">目標語言</label>
-            <select
-              disabled={isProcessing}
-              id="target-language"
-              value={targetLanguage}
-              onChange={(event) => setTargetLanguage(event.target.value)}
-            >
-              {TARGET_LANGUAGE_OPTIONS.map((language) => (
-                <option key={language} value={language}>
-                  {language}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="field">
-            <label htmlFor="timeout-seconds">逾時秒數</label>
-            <input
-              disabled={isProcessing}
-              id="timeout-seconds"
-              min="1"
-              step="1"
-              type="number"
-              value={timeoutSeconds}
-              onChange={(event) => setTimeoutSeconds(Number(event.target.value))}
-            />
-          </div>
-        </div>
-      </section>
-
-      <section aria-labelledby="upload-heading">
-        <h2 id="upload-heading">圖片來源</h2>
-        <div className="upload-grid">
-          <div className="field">
-            <label htmlFor="image-upload">上傳圖片</label>
-            <input
-              accept="image/png,image/jpeg,image/webp"
-              disabled={isProcessing}
-              id="image-upload"
-              onChange={(event) => {
-                const selectedFile = event.currentTarget.files?.[0];
-                handleImageChange(selectedFile);
-                event.currentTarget.value = "";
-              }}
-              type="file"
-            />
-          </div>
-          {imageErrorMessage ? <p className="error-message">{imageErrorMessage}</p> : null}
-          {imagePreviewUrl ? (
-            <img alt="上傳圖片預覽" className="image-preview" src={imagePreviewUrl} />
-          ) : null}
-        </div>
-      </section>
-
-      <section aria-labelledby="ocr-result-heading">
-        <h2 id="ocr-result-heading">OCR 結果</h2>
-        {taskStatus === "idle" ? <p>尚未上傳圖片</p> : null}
-        {taskStatus === "ready" ? <p>請選擇 OCR 模型後開始 OCR</p> : null}
-        {taskStatus === "ocr_running" ? (
-          <div className="running-status">
-            <p>OCR 處理中</p>
-            <button type="button" className="secondary-button" onClick={handleCancelOcr}>
-              取消 OCR
-            </button>
-          </div>
-        ) : null}
-        {taskStatus === "ocr_cancelled" ? <p>OCR 已取消</p> : null}
-        {taskStatus === "translation_running" ? (
-          <div className="running-status">
-            <p>翻譯處理中</p>
-            <button type="button" className="secondary-button" onClick={handleCancelTranslation}>
-              取消翻譯
-            </button>
-          </div>
-        ) : null}
-        {taskStatus === "translation_cancelled" ? <p>翻譯已取消</p> : null}
-        {taskStatus === "ocr_failed" ? (
-          <>
-            <p>OCR 失敗</p>
-            {ocrErrorMessage ? <p className="error-message">{ocrErrorMessage}</p> : null}
-          </>
-        ) : null}
-        {taskStatus === "translation_failed" ? (
-          <>
-            <p>翻譯失敗</p>
-            {translationErrorMessage ? (
-              <p className="error-message">{translationErrorMessage}</p>
-            ) : null}
-            {translationErrorDebugOutput ? (
-              <details className="debug-output" open>
-                <summary>模型原始輸出</summary>
-                <pre>{translationErrorDebugOutput}</pre>
-              </details>
-            ) : null}
-          </>
-        ) : null}
-        {taskStatus === "completed" ? (
-          <>
-            <p>{translations.length > 0 ? "翻譯完成" : "OCR 完成"}</p>
-            {ocrBlocks.length === 0 ? <p>未偵測到可翻譯文字</p> : null}
-          </>
-        ) : null}
-        {hasExportableResult ? (
-          <div className="result-actions">
-            {ocrBlocks.length > 0 ? (
-              <>
-              <button
-                type="button"
-                disabled={!selectedTranslationModel}
-                onClick={handleRetranslate}
-              >
-                重新翻譯
-              </button>
-              <button
-                type="button"
-                className="secondary-button"
-                disabled={!imageFile || !selectedOcrModel}
-                onClick={handleReprocess}
-              >
-                重新處理
-              </button>
-              </>
-            ) : null}
-            <button type="button" className="secondary-button" onClick={handleExportJson}>
-              匯出 JSON
-            </button>
-          </div>
-        ) : null}
-        {hasEditableResults ? (
-          <>
-            <div className="translation-table">
-              <div className="translation-table-heading">OCR 原文</div>
-              <div className="translation-table-heading">區塊譯文</div>
-              {ocrBlocks.map((block) => (
-                <div className="translation-row" key={block.id}>
-                  <div>
-                    <span>{block.id}</span>
-                    <label className="source-text-label" htmlFor={`source-text-${block.id}`}>
-                      {block.id} 修正原文
-                    </label>
-                    <textarea
-                      id={`source-text-${block.id}`}
-                      value={block.source_text}
-                      onChange={(event) => handleSourceTextChange(block.id, event.target.value)}
-                    />
-                  </div>
-                  <p>{translationByBlockId.get(block.id) ?? "尚未翻譯"}</p>
-                </div>
-              ))}
+      <div className="app-shell">
+        <div className="control-col">
+          <section className="panel" aria-labelledby="task-settings-heading">
+            <h2 id="task-settings-heading">翻譯任務</h2>
+            <div className="default-fields">
+              <div className="field">
+                <label htmlFor="ocr-model">OCR 模型</label>
+                <select
+                  disabled={isProcessing}
+                  id="ocr-model"
+                  value={selectedOcrModel}
+                  onChange={(event) => handleOcrModelChange(event.target.value)}
+                >
+                  <option value="">請選擇 OCR 模型</option>
+                  {models.map((model) => (
+                    <option key={model.name} value={model.name}>
+                      OCR：{model.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="field">
+                <label htmlFor="translation-model">翻譯模型</label>
+                <select
+                  disabled={isProcessing}
+                  id="translation-model"
+                  value={selectedTranslationModel}
+                  onChange={(event) => handleTranslationModelChange(event.target.value)}
+                >
+                  <option value="">請選擇翻譯模型</option>
+                  {models.map((model) => (
+                    <option key={model.name} value={model.name}>
+                      翻譯：{model.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="field">
+                <label htmlFor="target-language">目標語言</label>
+                <select
+                  disabled={isProcessing}
+                  id="target-language"
+                  value={targetLanguage}
+                  onChange={(event) => setTargetLanguage(event.target.value)}
+                >
+                  {TARGET_LANGUAGE_OPTIONS.map((language) => (
+                    <option key={language} value={language}>
+                      {language}
+                    </option>
+                  ))}
+                </select>
+              </div>
             </div>
-          </>
-        ) : null}
-      </section>
 
-      <div className="workspace">
-        <section aria-labelledby="model-list-heading">
-          <div className="section-heading">
-            <h2 id="model-list-heading">模型清單</h2>
-          </div>
-          {modelStatus === "loading" ? <p>模型清單載入中</p> : null}
-          {modelStatus === "success" && models.length > 0 ? (
-            <p>已載入 {models.length} 個模型</p>
-          ) : null}
-          {modelStatus === "success" && models.length === 0 ? <p>目前沒有可用模型</p> : null}
-          {modelStatus === "error" ? (
-            <>
-              <p>模型清單載入失敗</p>
-              {modelErrorMessage ? <p>{modelErrorMessage}</p> : null}
-            </>
-          ) : null}
-          <ul className="model-list">
-            {models.map((model) => (
-              <li key={model.name}>{model.name}</li>
-            ))}
-          </ul>
-        </section>
+            <div
+              className={isDragging ? "upload-zone is-dragging" : "upload-zone"}
+              onDragOver={(event) => {
+                event.preventDefault();
+                if (!isProcessing) {
+                  setIsDragging(true);
+                }
+              }}
+              onDragLeave={() => setIsDragging(false)}
+              onDrop={(event) => {
+                event.preventDefault();
+                setIsDragging(false);
+                if (isProcessing) {
+                  return;
+                }
+                handleImageChange(event.dataTransfer.files?.[0]);
+              }}
+              style={{ marginTop: "16px" }}
+            >
+              <span className="upload-cta">拖入或選擇漫畫圖片</span>
+              <p>PNG／JPEG／WebP，單張上限 10 MB</p>
+              <input
+                accept="image/png,image/jpeg,image/webp"
+                aria-label="上傳圖片"
+                disabled={isProcessing}
+                id="image-upload"
+                onChange={(event) => {
+                  const selectedFile = event.currentTarget.files?.[0];
+                  handleImageChange(selectedFile);
+                  event.currentTarget.value = "";
+                }}
+                type="file"
+              />
+            </div>
+            {imageErrorMessage ? <p className="error-message">{imageErrorMessage}</p> : null}
+          </section>
 
-        <section aria-labelledby="prompt-heading">
-          <h2 id="prompt-heading">提示詞設定</h2>
-          {promptStatus === "loading" ? <p>提示詞設定載入中</p> : null}
-          {promptStatus === "error" ? (
-            <>
-              <p>提示詞設定載入失敗</p>
-              {promptErrorMessage ? <p>{promptErrorMessage}</p> : null}
-            </>
-          ) : null}
-          {promptStatus === "success" && prompts ? (
-            <>
-              <p>提示詞來源：{prompts.source}</p>
-              <div className="prompt-grid">
+          <details className="advanced">
+            <summary>進階設定</summary>
+            <div className="advanced-body">
+              <div className="inline-row">
                 <div className="field">
-                  <label htmlFor="ocr-system-prompt">OCR system 提示詞</label>
-                  <textarea id="ocr-system-prompt" readOnly value={prompts.ocr.system} />
-                </div>
-                <div className="field">
-                  <label htmlFor="ocr-user-prompt">OCR user 提示詞</label>
-                  <textarea id="ocr-user-prompt" readOnly value={prompts.ocr.user} />
-                </div>
-                <div className="field">
-                  <label htmlFor="translation-system-prompt">翻譯 system 提示詞</label>
-                  <textarea
-                    id="translation-system-prompt"
-                    readOnly
-                    value={prompts.translation.system}
+                  <label htmlFor="ollama-base-url">Ollama 位址</label>
+                  <input
+                    disabled={isProcessing}
+                    id="ollama-base-url"
+                    value={ollamaBaseUrl}
+                    onChange={(event) => setOllamaBaseUrl(event.target.value)}
                   />
                 </div>
-                <div className="field">
-                  <label htmlFor="translation-user-prompt">翻譯 user 提示詞</label>
-                  <textarea id="translation-user-prompt" readOnly value={prompts.translation.user} />
+                <button
+                  type="button"
+                  className="secondary-button"
+                  disabled={isProcessing}
+                  onClick={() => loadModelsFor(ollamaBaseUrl)}
+                >
+                  重新整理模型清單
+                </button>
+              </div>
+              <div className="field">
+                <label htmlFor="source-language-hint">來源語言提示</label>
+                <select
+                  disabled={isProcessing}
+                  id="source-language-hint"
+                  value={sourceLanguageHint}
+                  onChange={(event) => setSourceLanguageHint(event.target.value)}
+                >
+                  {SOURCE_LANGUAGE_OPTIONS.map((language) => (
+                    <option key={language} value={language}>
+                      {language}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="field">
+                <label htmlFor="ocr-prompt-mode">OCR 提示詞模式</label>
+                <select
+                  disabled={isProcessing}
+                  id="ocr-prompt-mode"
+                  value={ocrPromptMode}
+                  onChange={(event) => setOcrPromptMode(event.target.value as OcrPromptMode)}
+                >
+                  <option value="auto">自動：依模型選擇</option>
+                  <option value="direct">直接圖片，不套用提示詞模板</option>
+                  <option value="prompted">使用 OCR 提示詞與 JSON 格式</option>
+                </select>
+                <p className="field-help">自動模式會讓 glm-ocr 直接辨識，其他模型使用 JSON schema</p>
+              </div>
+              <div className="field">
+                <label htmlFor="translation-prompt-mode">翻譯提示詞模式</label>
+                <select
+                  disabled={isProcessing}
+                  id="translation-prompt-mode"
+                  value={translationPromptMode}
+                  onChange={(event) =>
+                    setTranslationPromptMode(event.target.value as TranslationPromptMode)
+                  }
+                >
+                  <option value="prompted">使用翻譯提示詞與 block 對齊</option>
+                  <option value="direct">直接文字，不套用提示詞模板</option>
+                </select>
+                <p className="field-help">一般翻譯模型建議開啟；關閉時模型仍需回傳 block_id JSON</p>
+              </div>
+              <div className="field">
+                <label htmlFor="timeout-seconds">逾時秒數</label>
+                <input
+                  disabled={isProcessing}
+                  id="timeout-seconds"
+                  min="1"
+                  step="1"
+                  type="number"
+                  value={timeoutSeconds}
+                  onChange={(event) => setTimeoutSeconds(Number(event.target.value))}
+                />
+              </div>
+            </div>
+          </details>
+        </div>
+
+        <section className="result-col" aria-labelledby="ocr-result-heading">
+          <div className="panel result-panel">
+            <h2 id="ocr-result-heading">翻譯結果</h2>
+            {taskStatus === "idle" ? (
+              <div className="result-empty">
+                <span className="empty-badge">訳</span>
+                <p>
+                  <strong>選好 OCR 與翻譯模型、上傳一張漫畫圖片</strong>
+                  ，系統會自動辨識文字並翻成你的目標語言。圖片只在你的電腦上處理。
+                </p>
+              </div>
+            ) : null}
+            {taskStatus === "ready" ? (
+              <p className="status-line">
+                <span className="status-dot" aria-hidden="true" />
+                已就緒，請選擇 OCR 模型後自動開始
+              </p>
+            ) : null}
+            {taskStatus === "ocr_running" ? (
+              <div className="running-status">
+                <p>OCR 處理中</p>
+                <button type="button" className="secondary-button" onClick={handleCancelOcr}>
+                  取消 OCR
+                </button>
+              </div>
+            ) : null}
+            {taskStatus === "ocr_cancelled" ? (
+              <p className="status-line">
+                <span className="status-dot" aria-hidden="true" />
+                OCR 已取消
+              </p>
+            ) : null}
+            {taskStatus === "translation_running" ? (
+              <div className="running-status">
+                <p>翻譯處理中</p>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={handleCancelTranslation}
+                >
+                  取消翻譯
+                </button>
+              </div>
+            ) : null}
+            {taskStatus === "translation_cancelled" ? (
+              <p className="status-line">
+                <span className="status-dot" aria-hidden="true" />
+                翻譯已取消
+              </p>
+            ) : null}
+            {taskStatus === "ocr_failed" ? (
+              <>
+                <p className="status-line">
+                  <span className="status-dot is-error" aria-hidden="true" />
+                  OCR 失敗
+                </p>
+                {ocrErrorMessage ? <p className="error-message">{ocrErrorMessage}</p> : null}
+              </>
+            ) : null}
+            {taskStatus === "translation_failed" ? (
+              <>
+                <p className="status-line">
+                  <span className="status-dot is-error" aria-hidden="true" />
+                  翻譯失敗
+                </p>
+                {translationErrorMessage ? (
+                  <p className="error-message">{translationErrorMessage}</p>
+                ) : null}
+                {translationErrorDebugOutput ? (
+                  <details className="debug-output" open>
+                    <summary>模型原始輸出</summary>
+                    <pre>{translationErrorDebugOutput}</pre>
+                  </details>
+                ) : null}
+              </>
+            ) : null}
+            {taskStatus === "completed" ? (
+              <>
+                <p className="status-line">
+                  <span className="status-dot is-ok" aria-hidden="true" />
+                  {translations.length > 0 ? "翻譯完成" : "OCR 完成"}
+                </p>
+                {ocrBlocks.length === 0 ? <p className="muted">未偵測到可翻譯文字</p> : null}
+              </>
+            ) : null}
+            {hasExportableResult ? (
+              <div className="result-actions">
+                {ocrBlocks.length > 0 ? (
+                  <>
+                    <button
+                      type="button"
+                      disabled={!selectedTranslationModel}
+                      onClick={handleRetranslate}
+                    >
+                      重新翻譯
+                    </button>
+                    <button
+                      type="button"
+                      className="secondary-button"
+                      disabled={!imageFile || !selectedOcrModel}
+                      onClick={handleReprocess}
+                    >
+                      重新處理
+                    </button>
+                  </>
+                ) : null}
+                <button type="button" className="secondary-button" onClick={handleExportJson}>
+                  匯出 JSON
+                </button>
+              </div>
+            ) : null}
+            {imagePreviewUrl ? (
+              <div className="reading-view">
+                <div className="reading-media">
+                  <div className="reading-toolbar" role="toolbar" aria-label="閱讀控制">
+                    <button
+                      type="button"
+                      className="reading-tool-button"
+                      aria-label="縮小"
+                      disabled={!canZoomOut}
+                      onClick={handleZoomOut}
+                    >
+                      -
+                    </button>
+                    <button
+                      type="button"
+                      className="reading-tool-button"
+                      aria-label="放大"
+                      disabled={!canZoomIn}
+                      onClick={handleZoomIn}
+                    >
+                      +
+                    </button>
+                    <button
+                      type="button"
+                      className="reading-tool-button"
+                      aria-label="重設縮放"
+                      onClick={() => setImageZoom(1)}
+                    >
+                      Fit
+                    </button>
+                    <button
+                      type="button"
+                      className="reading-tool-button"
+                      aria-label="開啟原圖"
+                      onClick={handleOpenOriginalImage}
+                    >
+                      ↗
+                    </button>
+                  </div>
+                  <div className="reading-image-frame">
+                    <img
+                      alt="上傳圖片預覽"
+                      className={imageZoom === 1 ? "reading-image is-fit" : "reading-image"}
+                      src={imagePreviewUrl}
+                      style={readingImageStyle}
+                    />
+                  </div>
+                </div>
+                <div className="reading-side" role={hasEditableResults ? "list" : undefined}>
+                  {hasEditableResults
+                    ? ocrBlocks.map((block, blockIndex) => {
+                        const translated = translationByBlockId.get(block.id);
+                        const blockNumberId = `block-number-${block.id}`;
+                        const translationLabelId = `translation-label-${block.id}`;
+                        const translationTextId = `translation-text-${block.id}`;
+                        return (
+                          <article
+                            className="block-card"
+                            key={block.id}
+                            role="listitem"
+                            tabIndex={0}
+                            aria-labelledby={`${blockNumberId} ${translationLabelId} ${translationTextId}`}
+                          >
+                            <span
+                              className="block-tag"
+                              id={blockNumberId}
+                              aria-label={`第 ${blockIndex + 1} 段`}
+                            >
+                              {blockIndex + 1}
+                            </span>
+                            <div className="source-track">
+                              <label
+                                className="source-text-label"
+                                htmlFor={`source-text-${block.id}`}
+                              >
+                                {block.id} 修正原文
+                              </label>
+                              <textarea
+                                id={`source-text-${block.id}`}
+                                value={block.source_text}
+                                onChange={(event) =>
+                                  handleSourceTextChange(block.id, event.target.value)
+                                }
+                              />
+                            </div>
+                            <div className="translation-track">
+                              <span className="trans-label" id={translationLabelId}>
+                                譯文
+                              </span>
+                              <p
+                                className={translated ? "translated" : "translated is-empty"}
+                                id={translationTextId}
+                              >
+                                {translated ?? "尚未翻譯"}
+                              </p>
+                            </div>
+                          </article>
+                        );
+                      })
+                    : isProcessing ? (
+                        <p className="muted reading-hint">辨識與翻譯進行中，譯文會逐一出現在這裡…</p>
+                      ) : (
+                        <p className="muted reading-hint">選好兩個模型就會自動產生對照譯文。</p>
+                      )}
                 </div>
               </div>
-            </>
-          ) : null}
+            ) : null}
+          </div>
         </section>
       </div>
+
+      <details className="debug-section">
+        <summary>模型清單與提示詞檢視</summary>
+        <div className="debug-grid">
+          <section aria-labelledby="model-list-heading">
+            <h3 id="model-list-heading">模型清單</h3>
+            {modelStatus === "loading" ? <p className="muted">模型清單載入中</p> : null}
+            {modelStatus === "success" && models.length > 0 ? (
+              <p className="muted">已載入 {models.length} 個模型</p>
+            ) : null}
+            {modelStatus === "success" && models.length === 0 ? (
+              <p className="muted">目前沒有可用模型</p>
+            ) : null}
+            {modelStatus === "error" ? (
+              <>
+                <p className="error-message">模型清單載入失敗</p>
+                {modelErrorMessage ? <p className="muted">{modelErrorMessage}</p> : null}
+              </>
+            ) : null}
+            <ul className="model-list">
+              {models.map((model) => (
+                <li key={model.name}>{model.name}</li>
+              ))}
+            </ul>
+          </section>
+
+          <section aria-labelledby="prompt-heading">
+            <h3 id="prompt-heading">提示詞設定</h3>
+            {promptStatus === "loading" ? <p className="muted">提示詞設定載入中</p> : null}
+            {promptStatus === "error" ? (
+              <>
+                <p className="error-message">提示詞設定載入失敗</p>
+                {promptErrorMessage ? <p className="muted">{promptErrorMessage}</p> : null}
+              </>
+            ) : null}
+            {promptStatus === "success" && prompts ? (
+              <>
+                <p className="muted">提示詞來源：{prompts.source}</p>
+                <div className="prompt-grid">
+                  <div className="field">
+                    <label htmlFor="ocr-system-prompt">OCR system 提示詞</label>
+                    <textarea id="ocr-system-prompt" readOnly value={prompts.ocr.system} />
+                  </div>
+                  <div className="field">
+                    <label htmlFor="ocr-user-prompt">OCR user 提示詞</label>
+                    <textarea id="ocr-user-prompt" readOnly value={prompts.ocr.user} />
+                  </div>
+                  <div className="field">
+                    <label htmlFor="translation-system-prompt">翻譯 system 提示詞</label>
+                    <textarea
+                      id="translation-system-prompt"
+                      readOnly
+                      value={prompts.translation.system}
+                    />
+                  </div>
+                  <div className="field">
+                    <label htmlFor="translation-user-prompt">翻譯 user 提示詞</label>
+                    <textarea
+                      id="translation-user-prompt"
+                      readOnly
+                      value={prompts.translation.user}
+                    />
+                  </div>
+                </div>
+              </>
+            ) : null}
+          </section>
+        </div>
+      </details>
     </main>
   );
 }
