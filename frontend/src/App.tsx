@@ -1,7 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { CSSProperties } from "react";
+import type { CSSProperties, KeyboardEvent, PointerEvent } from "react";
 
 const DEFAULT_OLLAMA_BASE_URL = "http://127.0.0.1:11434";
+const IMAGE_ZOOM_MIN = 1;
+const IMAGE_ZOOM_MAX = 3;
+const IMAGE_ZOOM_STEP = 0.25;
+const IMAGE_KEYBOARD_PAN_STEP = 48;
+const IMAGE_KEYBOARD_SCROLL_STEP = 80;
 
 type Model = {
   name: string;
@@ -239,6 +244,28 @@ function createApiError(payload: ApiError, fallbackMessage: string): DebuggableE
   return error;
 }
 
+function clampReadingPanX(frame: HTMLDivElement | null, zoom: number, panX: number) {
+  if (!frame || zoom <= IMAGE_ZOOM_MIN) {
+    return 0;
+  }
+  const maxPanX = (frame.clientWidth * (zoom - IMAGE_ZOOM_MIN)) / 2;
+  return Math.min(maxPanX, Math.max(-maxPanX, panX));
+}
+
+function roundZoom(zoom: number) {
+  return Number(zoom.toFixed(2));
+}
+
+function scrollReadingFrameTo(frame: HTMLDivElement | null, top: number, left?: number) {
+  if (!frame) {
+    return;
+  }
+  frame.scrollTop = top;
+  if (typeof left === "number") {
+    frame.scrollLeft = left;
+  }
+}
+
 export default function App() {
   const persistedTaskSettings = useRef(readPersistedTaskSettings()).current;
   const [ollamaBaseUrl, setOllamaBaseUrl] = useState(
@@ -301,10 +328,20 @@ export default function App() {
   const latestTranslationRunId = useRef(0);
   const activeOcrAbortController = useRef<AbortController | null>(null);
   const activeTranslationAbortController = useRef<AbortController | null>(null);
+  const readingImageFrameRef = useRef<HTMLDivElement | null>(null);
+  const readingPanDragRef = useRef<{
+    pointerId: number;
+    startX: number;
+    startY: number;
+    startPanX: number;
+    startScrollTop: number;
+  } | null>(null);
   const isProcessing = taskStatus === "ocr_running" || taskStatus === "translation_running";
   const [theme, setTheme] = useState<ThemeMode>(readInitialTheme);
   const [isDragging, setIsDragging] = useState(false);
   const [imageZoom, setImageZoom] = useState(1);
+  const [imagePanX, setImagePanX] = useState(0);
+  const [isReadingPanning, setIsReadingPanning] = useState(false);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -317,7 +354,19 @@ export default function App() {
 
   useEffect(() => {
     setImageZoom(1);
+    setImagePanX(0);
+    scrollReadingFrameTo(readingImageFrameRef.current, 0, 0);
   }, [imagePreviewUrl]);
+
+  useEffect(() => {
+    const handleResize = () => {
+      setImagePanX((currentPanX) =>
+        clampReadingPanX(readingImageFrameRef.current, imageZoom, currentPanX)
+      );
+    };
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, [imageZoom]);
 
   const startTranslation = useCallback(
     (runId: number, blocks: TextBlock[], translationModel: string, ocrModel: string) => {
@@ -745,14 +794,124 @@ export default function App() {
     (taskStatus === "completed" ||
       taskStatus === "translation_cancelled" ||
       taskStatus === "translation_failed");
-  const readingImageStyle = { "--reading-zoom": imageZoom } as CSSProperties;
-  const canZoomOut = imageZoom > 0.75;
-  const canZoomIn = imageZoom < 3;
+  const readingImageStyle = {
+    "--reading-pan-x": `${imagePanX}px`,
+    "--reading-zoom": imageZoom
+  } as CSSProperties;
+  const canZoomOut = imageZoom > IMAGE_ZOOM_MIN;
+  const canZoomIn = imageZoom < IMAGE_ZOOM_MAX;
+  const canPanReadingImage = imageZoom > IMAGE_ZOOM_MIN;
   const handleZoomOut = () => {
-    setImageZoom((currentZoom) => Math.max(0.75, Number((currentZoom - 0.25).toFixed(2))));
+    setImageZoom((currentZoom) => {
+      const nextZoom = Math.max(IMAGE_ZOOM_MIN, roundZoom(currentZoom - IMAGE_ZOOM_STEP));
+      setImagePanX((currentPanX) =>
+        clampReadingPanX(readingImageFrameRef.current, nextZoom, currentPanX)
+      );
+      return nextZoom;
+    });
   };
   const handleZoomIn = () => {
-    setImageZoom((currentZoom) => Math.min(3, Number((currentZoom + 0.25).toFixed(2))));
+    setImageZoom((currentZoom) =>
+      Math.min(IMAGE_ZOOM_MAX, roundZoom(currentZoom + IMAGE_ZOOM_STEP))
+    );
+  };
+  const handleZoomReset = () => {
+    setImageZoom(IMAGE_ZOOM_MIN);
+    setImagePanX(0);
+    scrollReadingFrameTo(readingImageFrameRef.current, 0, 0);
+  };
+  const stopReadingPan = (pointerId?: number) => {
+    const frame = readingImageFrameRef.current;
+    if (typeof pointerId === "number" && frame?.hasPointerCapture(pointerId)) {
+      frame.releasePointerCapture(pointerId);
+    }
+    readingPanDragRef.current = null;
+    setIsReadingPanning(false);
+  };
+  const handleReadingPointerDown = (event: PointerEvent<HTMLDivElement>) => {
+    if (!canPanReadingImage || event.button !== 0) {
+      return;
+    }
+    const frame = readingImageFrameRef.current;
+    if (!frame) {
+      return;
+    }
+    event.preventDefault();
+    frame.setPointerCapture(event.pointerId);
+    readingPanDragRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      startPanX: imagePanX,
+      startScrollTop: frame.scrollTop
+    };
+    setIsReadingPanning(true);
+  };
+  const handleReadingPointerMove = (event: PointerEvent<HTMLDivElement>) => {
+    const dragState = readingPanDragRef.current;
+    const frame = readingImageFrameRef.current;
+    if (!dragState || !frame || dragState.pointerId !== event.pointerId) {
+      return;
+    }
+    event.preventDefault();
+    setImagePanX(
+      clampReadingPanX(frame, imageZoom, dragState.startPanX + event.clientX - dragState.startX)
+    );
+    frame.scrollTop = dragState.startScrollTop - (event.clientY - dragState.startY);
+  };
+  const handleReadingPointerUp = (event: PointerEvent<HTMLDivElement>) => {
+    if (readingPanDragRef.current?.pointerId === event.pointerId) {
+      stopReadingPan(event.pointerId);
+    }
+  };
+  const handleReadingKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    const frame = readingImageFrameRef.current;
+    if (!frame) {
+      return;
+    }
+    if (event.key === "ArrowLeft" && canPanReadingImage) {
+      event.preventDefault();
+      setImagePanX((currentPanX) =>
+        clampReadingPanX(frame, imageZoom, currentPanX + IMAGE_KEYBOARD_PAN_STEP)
+      );
+      return;
+    }
+    if (event.key === "ArrowRight" && canPanReadingImage) {
+      event.preventDefault();
+      setImagePanX((currentPanX) =>
+        clampReadingPanX(frame, imageZoom, currentPanX - IMAGE_KEYBOARD_PAN_STEP)
+      );
+      return;
+    }
+    if (event.key === "ArrowUp") {
+      event.preventDefault();
+      scrollReadingFrameTo(frame, frame.scrollTop - IMAGE_KEYBOARD_SCROLL_STEP);
+      return;
+    }
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      scrollReadingFrameTo(frame, frame.scrollTop + IMAGE_KEYBOARD_SCROLL_STEP);
+      return;
+    }
+    if (event.key === "PageUp") {
+      event.preventDefault();
+      scrollReadingFrameTo(frame, frame.scrollTop - frame.clientHeight);
+      return;
+    }
+    if (event.key === "PageDown") {
+      event.preventDefault();
+      scrollReadingFrameTo(frame, frame.scrollTop + frame.clientHeight);
+      return;
+    }
+    if (event.key === "Home") {
+      event.preventDefault();
+      scrollReadingFrameTo(frame, 0);
+      return;
+    }
+    if (event.key === "End") {
+      event.preventDefault();
+      scrollReadingFrameTo(frame, frame.scrollHeight);
+    }
   };
   const handleOpenOriginalImage = () => {
     if (!imagePreviewUrl) {
@@ -1146,7 +1305,7 @@ export default function App() {
                       type="button"
                       className="reading-tool-button"
                       aria-label="重設縮放"
-                      onClick={() => setImageZoom(1)}
+                      onClick={handleZoomReset}
                     >
                       Fit
                     </button>
@@ -1159,7 +1318,24 @@ export default function App() {
                       ↗
                     </button>
                   </div>
-                  <div className="reading-image-frame">
+                  <div
+                    ref={readingImageFrameRef}
+                    aria-label="漫畫頁閱讀區"
+                    className={[
+                      "reading-image-frame",
+                      canPanReadingImage ? "is-pannable" : "",
+                      isReadingPanning ? "is-panning" : ""
+                    ]
+                      .filter(Boolean)
+                      .join(" ")}
+                    onKeyDown={handleReadingKeyDown}
+                    onPointerCancel={handleReadingPointerUp}
+                    onPointerDown={handleReadingPointerDown}
+                    onPointerMove={handleReadingPointerMove}
+                    onPointerUp={handleReadingPointerUp}
+                    role="region"
+                    tabIndex={0}
+                  >
                     <img
                       alt="上傳圖片預覽"
                       className={imageZoom === 1 ? "reading-image is-fit" : "reading-image"}

@@ -568,7 +568,7 @@ details.advanced > summary:focus-visible {
 
 .reading-toolbar {
   position: absolute;
-  z-index: 1;
+  z-index: 2;
   top: 8px;
   right: 8px;
   display: inline-flex;
@@ -597,27 +597,57 @@ details.advanced > summary:focus-visible {
   background: var(--surface-2);
 }
 
+.reading-tool-button:disabled:hover {
+  background: var(--surface);
+}
+
 .reading-image-frame {
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
   max-height: calc(100vh - 40px);
   border: 2px solid var(--frame);
   border-radius: 8px;
   background: var(--surface);
   box-shadow: var(--shadow-hard-sm);
+  cursor: default;
+  scrollbar-gutter: stable;
+  touch-action: pan-y;
+}
+
+.reading-image-frame:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-hard-sm), 0 0 0 3px var(--focus);
+}
+
+.reading-image-frame.is-pannable {
+  cursor: grab;
+  touch-action: none;
+}
+
+.reading-image-frame.is-panning {
+  cursor: grabbing;
+  user-select: none;
 }
 
 .reading-image {
+  position: relative;
+  left: 50%;
   display: block;
   width: calc(100% * var(--reading-zoom));
   max-width: none;
   height: auto;
-  margin: 0 auto;
+  margin: 0;
   object-fit: contain;
+  pointer-events: none;
+  transform: translateX(calc(-50% + var(--reading-pan-x, 0px)));
+  transform-origin: top center;
+  user-select: none;
+  -webkit-user-drag: none;
 }
 
 .reading-image.is-fit {
   width: 100%;
-  max-height: calc(100vh - 44px);
+  transform: translateX(-50%);
 }
 
 .reading-side {
