@@ -473,5 +473,3 @@
 - Share templates with smaller customers to scale support without increasing headcount
 
 *Timestamp: 00:49:42*
-
-
