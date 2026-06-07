@@ -4,6 +4,9 @@ __pycache__/
 .ruff_cache/
 .scratch/
 .serena/
+.agents/skills/
+CLAUDE.md
+skills-lock.json
 node_modules/
 dist/
 frontend/dist/

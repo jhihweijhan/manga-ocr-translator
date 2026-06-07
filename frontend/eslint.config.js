@@ -20,13 +20,7 @@ export default tseslint.config(
   },
   {
     files: ["src/**/*.{ts,tsx}"],
-    ...reactHooks.configs.flat.recommended,
-    rules: {
-      ...reactHooks.configs.flat.recommended.rules,
-      // Existing effects synchronize UI state after async task/model changes; broader refactoring
-      // is outside the ESLint-config issue, while core hooks rules remain enabled.
-      "react-hooks/set-state-in-effect": "off"
-    }
+    ...reactHooks.configs.flat.recommended
   },
   {
     files: ["*.config.{js,ts}", "eslint.config.js"],

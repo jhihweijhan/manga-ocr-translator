@@ -557,6 +557,7 @@ export default function App() {
 
   useEffect(() => {
     if (modelStatus === "error" || promptStatus === "error") {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- Keep the debug disclosure in sync with async load failures.
       setDebugSectionOpen(true);
     }
   }, [modelStatus, promptStatus]);
@@ -571,12 +572,14 @@ export default function App() {
   }, [theme]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- A new image source resets the reader viewport controls.
     setImageZoom(1);
     setImagePanX(0);
     scrollReadingFrameTo(readingImageFrameRef.current, 0, 0);
   }, [imagePreviewUrl]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- Active block follows the externally replaced OCR block collection.
     setActiveBlockId((currentBlockId) => {
       if (ocrBlocks.length === 0) {
         return null;
