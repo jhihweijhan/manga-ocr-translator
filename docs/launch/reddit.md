@@ -9,7 +9,8 @@
 - 不 clickbait：標題具體、保守、可驗證。
 - 透明說明身分：I am the author/maintainer。
 - 隱私說法要準確：backend 不保存上傳圖片，但圖片仍會經過 browser、本機 backend 與本機 Ollama。
-- 不聲稱支援多張圖片批次、CBZ/ZIP、嵌字回圖、on-image overlay、任務歷史或匯入 JSON。
+- 可提及複製/純譯文 TXT 匯出，以及 task JSON 匯出與匯入；task JSON 不包含原圖，也不是任務歷史。
+- 不聲稱支援多張圖片批次、多頁閱讀任務、CBZ/ZIP、串流進度、嵌字回圖、on-image overlay 或任務歷史。
 
 ## r/LocalLLaMA
 
@@ -36,6 +37,7 @@ The current workflow is:
 - inspect each text block
 - edit OCR text when the model misread something
 - re-run only translation after proofreading
+- copy translations, export a plain-text translation file, or export/import the task JSON for later proofreading
 
 The backend does not persist uploaded images. That does not mean absolute privacy: the image still passes through the browser, local backend, and local Ollama. I am describing the project as local-first and lower-risk, not as a security guarantee.
 
@@ -51,7 +53,7 @@ Project link: https://github.com/jhihweijhan/manga-ocr-translator
 繁中備註：
 
 - 重點放在 local model workflow 與 OCR 結構化輸出，不要包裝成一般漫畫迷宣傳。
-- 若有人問支援度，回答第一版只處理單張圖片；沒有批次、CBZ/ZIP 或嵌字回圖。
+- 若有人問支援度，回答第一版只處理單張圖片；沒有批次、多頁、CBZ/ZIP、串流進度、on-image overlay 或嵌字回圖。task JSON 可匯入/匯出，但不包含原圖，也不是任務歷史。
 
 ## r/selfhosted
 
@@ -75,10 +77,13 @@ The architecture is intentionally simple:
 - local Ollama server
 - no backend persistence for uploaded images
 - no task history
+- task JSON export/import for restoring text blocks, translations, model choices, language settings, and prompt settings
 
 The important caveat: this is not "perfect privacy." The image still moves through the browser, local backend, and Ollama. The backend just does not save the upload after the current request.
 
 The useful part for me is inspectability. The app shows OCR text blocks and translations separately, so you can check what the model read, fix source text, and re-translate without repeating OCR.
+
+It can also export translated text as TXT, and export/import a task JSON for later proofreading. That JSON restores the text result and settings, but it does not include the original image.
 
 I am sharing it here because I would like feedback from people who self-host small tools:
 
@@ -118,8 +123,9 @@ This tool is focused on proofreading rather than fully automated release workflo
 - inspect the text blocks
 - edit OCR text if it was misread
 - re-translate after correction
+- copy translations, export TXT, or export/import task JSON for later proofreading
 
-It does not embed text back into the image, does not support batch chapters, and does not handle CBZ/ZIP. It is closer to a local reading/proofreading helper than a scanlation production tool.
+It does not embed text back into the image, does not render translations as an on-image overlay, does not support batch chapters or multi-page reading tasks, does not stream progress, and does not handle CBZ/ZIP. It is closer to a local reading/proofreading helper than a scanlation production tool.
 
 Privacy note: the backend does not save uploaded images, but the image still passes through the browser, local backend, and Ollama.
 

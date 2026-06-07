@@ -470,7 +470,7 @@ function readTaskJsonFile(file: File): Promise<string> {
 }
 
 export default function App() {
-  const persistedTaskSettings = useRef(readPersistedTaskSettings()).current;
+  const [persistedTaskSettings] = useState(readPersistedTaskSettings);
   const [ollamaBaseUrl, setOllamaBaseUrl] = useState(
     persistedTaskSettings.ollama_base_url ?? DEFAULT_OLLAMA_BASE_URL
   );
@@ -534,7 +534,6 @@ export default function App() {
   const [lastTaskSettings, setLastTaskSettings] = useState<TaskSettings | null>(null);
   const latestModelRequestId = useRef(0);
   const initialOllamaBaseUrl = useRef(ollamaBaseUrl);
-  const preserveUnavailableSelectedModelsForRequestId = useRef<number | null>(null);
   const latestImportRequestId = useRef(0);
   const latestOcrRunId = useRef(0);
   const latestTranslationRunId = useRef(0);
@@ -587,6 +586,15 @@ export default function App() {
       }
       return ocrBlocks[0].id;
     });
+  }, [ocrBlocks]);
+
+  useEffect(() => {
+    const currentBlockIds = new Set(ocrBlocks.map((block) => block.id));
+    for (const blockId of Object.keys(proofreadingBlockRefs.current)) {
+      if (!currentBlockIds.has(blockId)) {
+        delete proofreadingBlockRefs.current[blockId];
+      }
+    }
   }, [ocrBlocks]);
 
   useEffect(() => {
@@ -801,22 +809,12 @@ export default function App() {
         const availableModelNames = new Set(nextModels.map((model) => model.name));
         setModelErrorMessage(null);
         setModels(nextModels);
-        const shouldPreserveUnavailableModels =
-          preserveUnavailableSelectedModelsForRequestId.current === requestId;
         setSelectedOcrModel((currentModel) =>
-          currentModel && (availableModelNames.has(currentModel) || shouldPreserveUnavailableModels)
-            ? currentModel
-            : ""
+          currentModel && availableModelNames.has(currentModel) ? currentModel : ""
         );
         setSelectedTranslationModel((currentModel) =>
-          currentModel &&
-          (availableModelNames.has(currentModel) || shouldPreserveUnavailableModels)
-            ? currentModel
-            : ""
+          currentModel && availableModelNames.has(currentModel) ? currentModel : ""
         );
-        if (shouldPreserveUnavailableModels) {
-          preserveUnavailableSelectedModelsForRequestId.current = null;
-        }
         setModelStatus("success");
       })
       .catch((error: Error) => {
@@ -902,7 +900,6 @@ export default function App() {
     activeTranslationAbortController.current = null;
     latestOcrRunId.current += 1;
     latestTranslationRunId.current += 1;
-    preserveUnavailableSelectedModelsForRequestId.current = latestModelRequestId.current;
 
     setOllamaBaseUrl(document.settings.ollama_base_url);
     setSelectedOcrModel(document.settings.ocr_model);
@@ -1840,7 +1837,11 @@ export default function App() {
                                 role="listitem"
                                 tabIndex={isActiveBlock ? 0 : -1}
                                 ref={(element) => {
-                                  proofreadingBlockRefs.current[block.id] = element;
+                                  if (element) {
+                                    proofreadingBlockRefs.current[block.id] = element;
+                                  } else {
+                                    delete proofreadingBlockRefs.current[block.id];
+                                  }
                                 }}
                                 aria-current={isActiveBlock ? "true" : undefined}
                                 aria-labelledby={`${blockNumberId} ${translationLabelId} ${translationTextId}`}

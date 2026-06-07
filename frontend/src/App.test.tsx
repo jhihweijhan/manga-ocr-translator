@@ -3261,6 +3261,13 @@ describe("App", () => {
     expect(screen.getByLabelText("翻譯模型")).toHaveValue("old-translation:latest");
     expect(screen.getByRole("option", { name: "OCR：old-ocr:latest" })).toBeInTheDocument();
     expect(screen.getByRole("option", { name: "翻譯：old-translation:latest" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "重新整理模型清單" }));
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("OCR 模型")).toHaveValue("");
+    });
+    expect(screen.getByLabelText("翻譯模型")).toHaveValue("");
   });
 
   it("完成後可依目前文字區塊順序匯出純譯文 TXT", async () => {

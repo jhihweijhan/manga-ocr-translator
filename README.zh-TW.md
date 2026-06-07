@@ -34,10 +34,19 @@
 - 單張漫畫圖片 OCR，並產生可編輯文字區塊。
 - 從本機 Ollama 模型清單分別選擇 OCR 與翻譯模型。
 - 依 OCR 區塊順序輸出翻譯結果。
-- 支援單段翻譯複製、全部複製與純文字匯出。
+- 校對 OCR 原文後可重新翻譯，不需要重跑 OCR。
+- 支援單段翻譯複製、全部複製與純譯文 TXT 匯出。
+- 支援匯出與匯入 task JSON，以還原文字區塊、區塊譯文、模型選擇、語言設定與提示詞設定。
 - 可檢視 prompt template，確認 OCR 與翻譯 request 的組成方式。
 - Ollama 無法連線時提供第一次使用引導。
 - 本機開發 stack 使用 FastAPI、React、Vite、Vitest、pytest 與 uv。
+
+## 目前限制
+
+- 已實作流程一次處理一張圖片；多頁閱讀任務、多張圖片批次、CBZ 與 ZIP 仍是 [ADR 0012](./docs/adr/0012-multi-page-reading-task.md) 的提案，尚未支援。
+- 串流進度仍是 [ADR 0011](./docs/adr/0011-stream-progress-with-complete-results.md) 的提案，現行 app 會等待完整 OCR 與翻譯結果。
+- 尚未實作 on-image overlay 或把譯文嵌回圖片。[ADR 0010](./docs/adr/0010-text-region-detection.md) 只提議未來支援位置資訊與 overlay，現行主流程仍是列表式校對。
+- Backend 不提供任務歷史。task JSON 匯入/匯出只是本機檔案交接，不包含原圖。
 
 ## 隱私說明
 
@@ -92,7 +101,7 @@ npm run dev
 4. 上傳漫畫圖片。
 5. 圖片與兩個模型都就緒後，app 會自動連續執行 OCR 與翻譯。
 6. 完成後校對 OCR 文字區塊，再用 **重新翻譯** 以修正後文字重跑翻譯，不需要重跑 OCR。
-7. 複製單段翻譯、複製全部翻譯，或匯出純文字。
+7. 複製單段翻譯、複製全部翻譯、匯出純文字，或匯出/匯入 task JSON 以便之後繼續校對。
 
 ## 專案結構
 

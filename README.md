@@ -34,10 +34,19 @@ Screenshots and demo media are intentionally placeholders until the UI stabilize
 - Single-image manga OCR with editable text blocks.
 - Separate OCR and translation model selection from the local Ollama model list.
 - Translation output that follows the OCR block order.
-- Copy and plain-text export flows for translated blocks.
+- Re-translate after proofreading OCR text without rerunning OCR.
+- Copy and plain-text TXT export flows for translated blocks.
+- Export and import task JSON to restore text blocks, translations, model choices, language settings, and prompt settings.
 - Prompt template visibility for checking how OCR and translation requests are shaped.
 - First-run guidance when Ollama is not reachable.
 - Local development stack with FastAPI, React, Vite, Vitest, pytest, and uv.
+
+## Current Limits
+
+- The implemented workflow handles one image at a time. Multi-page reading tasks, batch chapters, CBZ, and ZIP remain proposed in [ADR 0012](./docs/adr/0012-multi-page-reading-task.md) and are not supported yet.
+- Streaming progress is proposed in [ADR 0011](./docs/adr/0011-stream-progress-with-complete-results.md), but the current app waits for complete OCR and translation results.
+- On-image overlay and embedded translated text are not implemented. [ADR 0010](./docs/adr/0010-text-region-detection.md) only proposes future position-aware overlay support, and the active workflow remains list-based proofreading.
+- The backend does not provide task history. Task JSON import/export is a local file handoff and does not include the original image.
 
 ## Privacy Notes
 
@@ -92,7 +101,7 @@ Open the local URL printed by Vite. The frontend proxies `/api` requests to `htt
 4. Upload a manga image.
 5. The app automatically runs OCR and translation once the image and both models are ready.
 6. Proofread OCR text blocks after completion, then use **重新翻譯** to translate the edited text without rerunning OCR.
-7. Copy a single translation, copy all translations, or export plain text.
+7. Copy a single translation, copy all translations, export plain text, or export/import task JSON for later proofreading.
 
 ## Project Layout
 
