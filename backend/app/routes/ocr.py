@@ -3,7 +3,7 @@ import base64
 import contextlib
 import json
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, Protocol
 
 from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
 
@@ -11,6 +11,7 @@ from app.api_errors import api_error
 from app.ollama_client import (
     OllamaClient,
     OllamaConnectionError,
+    OllamaInvalidResponseError,
     OllamaRequestError,
     OllamaTimeoutError,
 )
@@ -45,6 +46,19 @@ router = APIRouter()
 
 class ClientDisconnectedError(Exception):
     pass
+
+
+class DisconnectAwareRequest(Protocol):
+    async def is_disconnected(self) -> bool: ...
+
+
+class OllamaGenerateClient(Protocol):
+    async def generate(
+        self,
+        base_url: str,
+        payload: dict[str, Any],
+        timeout_seconds: float,
+    ) -> dict[str, Any]: ...
 
 
 def get_ollama_client() -> OllamaClient:
@@ -181,6 +195,14 @@ async def run_ocr(
             message="Ollama rejected the OCR model request.",
             details={"reason": str(exc)},
         ) from exc
+    except OllamaInvalidResponseError as exc:
+        raise api_error(
+            status_code=502,
+            code="invalid_model_json",
+            stage="ocr",
+            message="Model response did not match the expected JSON schema.",
+            details={"reason": str(exc)},
+        ) from exc
     except OllamaConnectionError as exc:
         raise api_error(
             status_code=502,
@@ -226,8 +248,8 @@ def _resolve_ocr_prompt_mode(ocr_model: str, requested_prompt_mode: str) -> str:
 
 async def generate_ocr_with_disconnect_watch(
     *,
-    request: Request,
-    ollama_client: OllamaClient,
+    request: DisconnectAwareRequest,
+    ollama_client: OllamaGenerateClient,
     ollama_base_url: str,
     request_payload: dict[str, Any],
     timeout_seconds: float,

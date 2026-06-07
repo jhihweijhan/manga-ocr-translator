@@ -1,19 +1,19 @@
 import asyncio
 
 import httpx
-from fastapi.testclient import TestClient
-
 from app.main import app
-from app.ollama_client import OllamaConnectionError
-from app.ollama_client import OllamaClient
+from app.ollama_client import OllamaClient, OllamaConnectionError
 from app.routes.models import get_ollama_client
+from fastapi.testclient import TestClient
 
 
 class StubOllamaClient:
     def __init__(self) -> None:
         self.calls: list[tuple[str, float]] = []
 
-    async def list_models(self, base_url: str, timeout_seconds: float):
+    async def list_models(
+        self, base_url: str, timeout_seconds: float
+    ) -> list[dict[str, object]]:
         self.calls.append((base_url, timeout_seconds))
         return [
             {
@@ -27,12 +27,16 @@ class StubOllamaClient:
 
 
 class FailingOllamaClient:
-    async def list_models(self, base_url: str, timeout_seconds: float):
+    async def list_models(
+        self, base_url: str, timeout_seconds: float
+    ) -> list[dict[str, object]]:
         raise OllamaConnectionError("Connection refused")
 
 
 class TimeoutOllamaClient:
-    async def list_models(self, base_url: str, timeout_seconds: float):
+    async def list_models(
+        self, base_url: str, timeout_seconds: float
+    ) -> list[dict[str, object]]:
         raise TimeoutError("Timed out")
 
 

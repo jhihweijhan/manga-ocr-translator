@@ -2,9 +2,9 @@ import asyncio
 import contextlib
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from app.api_errors import api_error
@@ -42,6 +42,19 @@ router = APIRouter()
 
 class ClientDisconnectedError(Exception):
     pass
+
+
+class DisconnectAwareRequest(Protocol):
+    async def is_disconnected(self) -> bool: ...
+
+
+class OllamaGenerateClient(Protocol):
+    async def generate(
+        self,
+        base_url: str,
+        payload: dict[str, Any],
+        timeout_seconds: float,
+    ) -> dict[str, Any]: ...
 
 
 class TextBlockRequest(BaseModel):
@@ -209,8 +222,8 @@ async def translate_blocks(
 
 async def generate_translation_with_disconnect_watch(
     *,
-    request: Request,
-    ollama_client: OllamaClient,
+    request: DisconnectAwareRequest,
+    ollama_client: OllamaGenerateClient,
     ollama_base_url: str,
     request_payload: dict[str, Any],
     timeout_seconds: float,
@@ -288,7 +301,7 @@ def _parse_translations(
     ]
 
 
-def _invalid_translation_json(reason: str, raw_model_response: str | None = None):
+def _invalid_translation_json(reason: str, raw_model_response: str | None = None) -> HTTPException:
     details: dict[str, Any] = {"reason": reason}
     if raw_model_response is not None:
         max_debug_chars = 8000

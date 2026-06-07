@@ -1,0 +1,35 @@
+# 漫畫翻譯神器
+
+> 漫畫翻譯神器是 local-first 的開源工具，用本機 Ollama、FastAPI backend 與 React/Vite frontend，把單張漫畫圖片轉成可修正文字區塊與區塊譯文。
+
+llms.txt 是給 AI assistants 參考的專案摘要，不是正式 Web 標準或排名保證。請以 README、PRODUCT.md 與 ADR 作為產品行為的權威來源。
+
+The project separates this static landing page from the app. The app processes one uploaded image at a time, lets users inspect OCR text blocks, edit source text, regenerate translated block text, and export structured results.
+
+Privacy note: the backend does not persist uploaded images, but images still move through the browser, local backend, and Ollama during the request.
+
+## Project
+
+- [GitHub repository](https://github.com/jhihweijhan/manga-ocr-translator): Source code and issue tracker.
+- [README](https://github.com/jhihweijhan/manga-ocr-translator#readme): Setup, quick start, stack overview, privacy notes, and commands.
+- [Landing page](index.html): Static product page with product summary, demo, install notes, and structured data.
+
+## Install
+
+- Start Ollama: `ollama serve`, then pull model examples such as `ollama pull gemma3:latest` and `ollama pull qwen3:latest`.
+- Start backend: `uv sync`, then `uv run uvicorn app.main:app --app-dir backend --host 127.0.0.1 --port 8000`.
+- Start frontend: `cd frontend`, `npm install`, then `npm run dev`.
+
+## Documentation
+
+- [Product specification](PRODUCT.md): Current behavior, goals, and product limits.
+- [Technical specification](TECH.md): Architecture, request flow, model response handling, and frontend/backend boundaries.
+- [ADR 0008](adr/0008-do-not-persist-uploaded-images.md): Decision to avoid persisting uploaded images in the backend.
+
+## Keywords
+
+- local-first manga OCR translator
+- single image OCR translation
+- editable OCR text blocks
+- translated block text
+- Ollama FastAPI React Vite

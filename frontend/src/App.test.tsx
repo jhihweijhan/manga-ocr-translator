@@ -20,6 +20,14 @@ async function readDownloadedJson(): Promise<Record<string, unknown>> {
   return JSON.parse(await readBlobAsText(exportBlob)) as Record<string, unknown>;
 }
 
+async function readDownloadedText(mimeType: string): Promise<string> {
+  const exportBlob = vi.mocked(URL.createObjectURL).mock.calls.find(
+    ([value]) => value instanceof Blob && value.type === mimeType
+  )?.[0] as Blob;
+
+  return readBlobAsText(exportBlob);
+}
+
 afterEach(() => {
   cleanup();
   localStorage.clear();
@@ -191,6 +199,45 @@ describe("App", () => {
     });
   });
 
+  it("idle 空狀態顯示上手教學且不阻擋上傳與模型選擇", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+      if (String(input).startsWith("/api/prompts")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              source: "builtin",
+              ocr: { system: "OCR system", user: "OCR user" },
+              translation: { system: "Translation system", user: "Translation user" }
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } }
+          )
+        );
+      }
+
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            models: [{ name: "gemma3:latest", model: "gemma3:latest" }]
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        )
+      );
+    });
+
+    render(<App />);
+
+    await screen.findByText("gemma3:latest");
+
+    expect(screen.getByRole("heading", { name: "開始第一個翻譯任務" })).toBeInTheDocument();
+    expect(screen.getByText("確認 Ollama 位址與模型清單")).toBeInTheDocument();
+    expect(screen.getByText("選擇 OCR 模型與翻譯模型")).toBeInTheDocument();
+    expect(screen.getByText("上傳單張漫畫圖片後自動處理")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Ollama 連線檢查" })).not.toBeInTheDocument();
+    expect(screen.getByLabelText("上傳圖片")).toBeEnabled();
+    expect(screen.getByLabelText("OCR 模型")).toBeEnabled();
+    expect(screen.getByLabelText("翻譯模型")).toBeEnabled();
+  });
+
   it("模型清單為空時顯示 empty 狀態", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(JSON.stringify({ models: [] }), {
@@ -204,7 +251,7 @@ describe("App", () => {
     expect(await screen.findByText("目前沒有可用模型")).toBeInTheDocument();
   });
 
-  it("模型清單 API 失敗時顯示錯誤狀態", async () => {
+  it("模型清單 API 失敗時保留錯誤並顯示 Ollama 修復引導", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(
         JSON.stringify({
@@ -223,6 +270,11 @@ describe("App", () => {
 
     expect(await screen.findByText("模型清單載入失敗")).toBeInTheDocument();
     expect(screen.getByText("Could not reach Ollama while loading the model list.")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Ollama 連線檢查" })).toBeInTheDocument();
+    expect(screen.getByText("安裝 Ollama：到 ollama.com 下載並完成安裝。")).toBeInTheDocument();
+    expect(screen.getByText("ollama serve")).toBeInTheDocument();
+    expect(screen.getByText("ollama pull gemma3:latest")).toBeInTheDocument();
+    expect(screen.getByText("確認 Ollama 位址是否為 http://127.0.0.1:11434，或改成你的本機服務位址。")).toBeInTheDocument();
   });
 
   it("顯示提示詞來源與只讀內容", async () => {
@@ -522,6 +574,93 @@ describe("App", () => {
     expect(await screen.findByText("OCR 完成")).toBeInTheDocument();
     expect(screen.getByText("こんにちは")).toBeInTheDocument();
     expect(fetchMock.mock.calls.filter(([input]) => String(input).startsWith("/api/ocr"))).toHaveLength(1);
+  });
+
+  it("閱讀控制列固定在圖片內容區外，縮放後仍保留可及操作", async () => {
+    Object.defineProperty(URL, "createObjectURL", { configurable: true, value: vi.fn(() => "blob:page-preview") });
+    Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: vi.fn() });
+
+    vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+      if (String(input).startsWith("/api/prompts")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              source: "builtin",
+              ocr: { system: "OCR system", user: "OCR user" },
+              translation: { system: "Translation system", user: "Translation user" }
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } }
+          )
+        );
+      }
+
+      if (String(input).startsWith("/api/ocr")) {
+        const formData = init?.body as FormData;
+        expect(formData.get("ocr_model")).toBe("gemma3:latest");
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              blocks: [
+                {
+                  id: "block-1",
+                  source_text: "こんにちは",
+                  confidence: 0.91,
+                  position: null
+                }
+              ],
+              prompt: {
+                source: "builtin",
+                system_template: "OCR system",
+                user_template: "OCR user",
+                rendered_system: "OCR system rendered",
+                rendered_user: "OCR user rendered"
+              },
+              raw_model: { model: "gemma3:latest" }
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } }
+          )
+        );
+      }
+
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            models: [{ name: "gemma3:latest", model: "gemma3:latest" }]
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        )
+      );
+    });
+
+    render(<App />);
+
+    await screen.findByText("gemma3:latest");
+    fireEvent.change(screen.getByLabelText("OCR 模型"), {
+      target: { value: "gemma3:latest" }
+    });
+    fireEvent.change(screen.getByLabelText("上傳圖片"), {
+      target: { files: [new File(["small"], "page.png", { type: "image/png" })] }
+    });
+
+    const preview = await screen.findByAltText("上傳圖片預覽");
+    const toolbar = screen.getByRole("toolbar", { name: "閱讀控制" });
+    const frame = screen.getByRole("region", { name: "漫畫頁閱讀區" });
+    const toolbarStrip = toolbar.parentElement;
+
+    expect(frame).not.toContainElement(toolbar);
+    expect(toolbarStrip).toHaveClass("reading-toolbar-strip");
+    expect(frame.previousElementSibling).toBe(toolbarStrip);
+    expect(toolbar.compareDocumentPosition(frame)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(screen.getByRole("button", { name: "縮小" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "放大" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "重設縮放" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "開啟原圖" })).toBeEnabled();
+
+    fireEvent.click(screen.getByRole("button", { name: "放大" }));
+
+    expect(preview).toHaveStyle({ "--reading-zoom": "1.25" });
+    expect(toolbar.parentElement).toBe(toolbarStrip);
+    expect(toolbar.compareDocumentPosition(frame)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
   });
 
   it("上傳完成後清空圖片輸入，讓使用者可以再次選同一張圖片重新處理", async () => {
@@ -1330,6 +1469,309 @@ describe("App", () => {
     expect(screen.getByLabelText("block-1 修正原文")).toHaveValue("こんにちは");
     expect(screen.getByText("你好")).toBeInTheDocument();
     expect(fetchMock.mock.calls.filter(([input]) => String(input).startsWith("/api/translate"))).toHaveLength(1);
+  });
+
+  it("使用者修正原文時以 OCR 原值顯示已修改標記，改回原值後移除標記", async () => {
+    Object.defineProperty(URL, "createObjectURL", { configurable: true, value: vi.fn(() => "blob:dirty") });
+    Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: vi.fn() });
+
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+      if (String(input).startsWith("/api/prompts")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              source: "builtin",
+              ocr: { system: "OCR system", user: "OCR user" },
+              translation: { system: "Translation system", user: "Translation user" }
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } }
+          )
+        );
+      }
+
+      if (String(input).startsWith("/api/ocr")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              blocks: [{ id: "block-1", source_text: "こんにちわ", confidence: null, position: null }],
+              prompt: {
+                source: "builtin",
+                system_template: "OCR system",
+                user_template: "OCR user",
+                rendered_system: "OCR system rendered",
+                rendered_user: "OCR user rendered"
+              },
+              raw_model: { model: "gemma3:latest" }
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } }
+          )
+        );
+      }
+
+      if (String(input).startsWith("/api/translate")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              translations: [{ block_id: "block-1", translated_text: "你好" }],
+              prompt: {
+                source: "builtin",
+                system_template: "Translation system",
+                user_template: "Translation user",
+                rendered_system: "Translation system rendered",
+                rendered_user: "Translation user rendered"
+              },
+              raw_model: { model: "qwen3:latest" }
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } }
+          )
+        );
+      }
+
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            models: [
+              { name: "gemma3:latest", model: "gemma3:latest" },
+              { name: "qwen3:latest", model: "qwen3:latest" }
+            ]
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        )
+      );
+    });
+
+    render(<App />);
+
+    await screen.findByText("gemma3:latest");
+    fireEvent.change(screen.getByLabelText("OCR 模型"), {
+      target: { value: "gemma3:latest" }
+    });
+    fireEvent.change(screen.getByLabelText("翻譯模型"), {
+      target: { value: "qwen3:latest" }
+    });
+    fireEvent.change(screen.getByLabelText("上傳圖片"), {
+      target: { files: [new File(["small"], "page.png", { type: "image/png" })] }
+    });
+
+    expect(await screen.findByText("翻譯完成")).toBeInTheDocument();
+    expect(screen.queryByText("已修改")).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("block-1 修正原文"), {
+      target: { value: "こんにちは" }
+    });
+
+    expect(screen.getByText("已修改")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("block-1 修正原文"), {
+      target: { value: "こんにちわ" }
+    });
+
+    expect(screen.queryByText("已修改")).not.toBeInTheDocument();
+  });
+
+  it("重新處理取得新 OCR 結果後會更新已修改標記基準", async () => {
+    Object.defineProperty(URL, "createObjectURL", { configurable: true, value: vi.fn(() => "blob:dirty-reprocess") });
+    Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: vi.fn() });
+
+    let ocrRequestCount = 0;
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+      if (String(input).startsWith("/api/prompts")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              source: "builtin",
+              ocr: { system: "OCR system", user: "OCR user" },
+              translation: { system: "Translation system", user: "Translation user" }
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } }
+          )
+        );
+      }
+
+      if (String(input).startsWith("/api/ocr")) {
+        ocrRequestCount += 1;
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              blocks: [
+                {
+                  id: "block-1",
+                  source_text: ocrRequestCount === 1 ? "初次 OCR" : "重新處理 OCR",
+                  confidence: null,
+                  position: null
+                }
+              ],
+              prompt: {
+                source: "builtin",
+                system_template: "OCR system",
+                user_template: "OCR user",
+                rendered_system: "OCR system rendered",
+                rendered_user: "OCR user rendered"
+              },
+              raw_model: { model: "gemma3:latest" }
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } }
+          )
+        );
+      }
+
+      if (String(input).startsWith("/api/translate")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              translations: [{ block_id: "block-1", translated_text: "譯文" }],
+              prompt: {
+                source: "builtin",
+                system_template: "Translation system",
+                user_template: "Translation user",
+                rendered_system: "Translation system rendered",
+                rendered_user: "Translation user rendered"
+              },
+              raw_model: { model: "qwen3:latest" }
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } }
+          )
+        );
+      }
+
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            models: [
+              { name: "gemma3:latest", model: "gemma3:latest" },
+              { name: "qwen3:latest", model: "qwen3:latest" }
+            ]
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        )
+      );
+    });
+
+    render(<App />);
+
+    await screen.findByText("gemma3:latest");
+    fireEvent.change(screen.getByLabelText("OCR 模型"), {
+      target: { value: "gemma3:latest" }
+    });
+    fireEvent.change(screen.getByLabelText("翻譯模型"), {
+      target: { value: "qwen3:latest" }
+    });
+    fireEvent.change(screen.getByLabelText("上傳圖片"), {
+      target: { files: [new File(["small"], "page.png", { type: "image/png" })] }
+    });
+
+    expect(await screen.findByText("翻譯完成")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("block-1 修正原文"), {
+      target: { value: "手動修正" }
+    });
+    expect(screen.getByText("已修改")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "重新處理" }));
+
+    expect(await screen.findByDisplayValue("重新處理 OCR")).toBeInTheDocument();
+    expect(screen.queryByText("已修改")).not.toBeInTheDocument();
+  });
+
+  it("完成後可複製單段譯文與依區塊順序複製全部譯文", async () => {
+    Object.defineProperty(URL, "createObjectURL", { configurable: true, value: vi.fn(() => "blob:copy") });
+    Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: vi.fn() });
+    const writeText = vi.fn(() => Promise.resolve());
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText }
+    });
+
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+      if (String(input).startsWith("/api/prompts")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              source: "builtin",
+              ocr: { system: "OCR system", user: "OCR user" },
+              translation: { system: "Translation system", user: "Translation user" }
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } }
+          )
+        );
+      }
+
+      if (String(input).startsWith("/api/ocr")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              blocks: [
+                { id: "panel-a", source_text: "一", confidence: null, position: null },
+                { id: "panel-b", source_text: "二", confidence: null, position: null }
+              ],
+              prompt: {
+                source: "builtin",
+                system_template: "OCR system",
+                user_template: "OCR user",
+                rendered_system: "OCR system rendered",
+                rendered_user: "OCR user rendered"
+              },
+              raw_model: { model: "gemma3:latest" }
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } }
+          )
+        );
+      }
+
+      if (String(input).startsWith("/api/translate")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              translations: [
+                { block_id: "panel-b", translated_text: "第二段譯文" },
+                { block_id: "panel-a", translated_text: "第一段譯文" }
+              ],
+              prompt: {
+                source: "builtin",
+                system_template: "Translation system",
+                user_template: "Translation user",
+                rendered_system: "Translation system rendered",
+                rendered_user: "Translation user rendered"
+              },
+              raw_model: { model: "qwen3:latest" }
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } }
+          )
+        );
+      }
+
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            models: [
+              { name: "gemma3:latest", model: "gemma3:latest" },
+              { name: "qwen3:latest", model: "qwen3:latest" }
+            ]
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        )
+      );
+    });
+
+    render(<App />);
+
+    await screen.findByText("gemma3:latest");
+    fireEvent.change(screen.getByLabelText("OCR 模型"), {
+      target: { value: "gemma3:latest" }
+    });
+    fireEvent.change(screen.getByLabelText("翻譯模型"), {
+      target: { value: "qwen3:latest" }
+    });
+    fireEvent.change(screen.getByLabelText("上傳圖片"), {
+      target: { files: [new File(["small"], "page.png", { type: "image/png" })] }
+    });
+
+    expect(await screen.findByText("翻譯完成")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "panel-b 複製譯文" }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith("第二段譯文"));
+
+    fireEvent.click(screen.getByRole("button", { name: "複製全部譯文" }));
+    await waitFor(() => expect(writeText).toHaveBeenLastCalledWith("第一段譯文\n第二段譯文"));
   });
 
   it("完成 OCR-only 任務後選擇翻譯模型會自動翻譯", async () => {
@@ -2447,6 +2889,725 @@ describe("App", () => {
     expect(exportedText).not.toContain("secret-image-bytes");
     expect(exportedText).not.toContain("data:image");
     expect(exportedText).not.toContain("blob:export-json");
+  });
+
+  it("可匯入先前匯出的 JSON 並還原任務內容但不偽造圖片預覽", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+      if (String(input).startsWith("/api/prompts")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              source: "builtin",
+              ocr: { system: "OCR system", user: "OCR user" },
+              translation: { system: "Translation system", user: "Translation user" }
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } }
+          )
+        );
+      }
+
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            models: [
+              { name: "gemma3:latest", model: "gemma3:latest" },
+              { name: "qwen3:latest", model: "qwen3:latest" }
+            ]
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        )
+      );
+    });
+
+    render(<App />);
+
+    await screen.findByText("gemma3:latest");
+
+    const taskJson = {
+      version: 1,
+      image: { filename: "imported-page.png" },
+      settings: {
+        ollama_base_url: "http://ollama.imported:11434",
+        ocr_model: "gemma3:latest",
+        translation_model: "qwen3:latest",
+        ocr_prompt_mode: "prompted",
+        translation_prompt_mode: "direct",
+        source_language_hint: "日文",
+        target_language: "英文",
+        timeout_seconds: 45
+      },
+      blocks: [
+        { block_id: "panel-a", source_text: "こんにちは", confidence: 0.87, position: null },
+        { block_id: "panel-b", source_text: "世界", confidence: null, position: null }
+      ],
+      translations: {
+        "panel-a": "Hello",
+        "panel-b": "World"
+      },
+      prompts: {
+        ocr: {
+          source: "builtin",
+          system_template: "OCR system",
+          user_template: "OCR user",
+          rendered_system: "Imported OCR system rendered",
+          rendered_user: "Imported OCR user rendered"
+        },
+        translation: {
+          source: "builtin",
+          system_template: "Translation system",
+          user_template: "Translation user",
+          rendered_system: "Imported translation system rendered",
+          rendered_user: "Imported translation user rendered"
+        }
+      }
+    };
+
+    fireEvent.change(screen.getByLabelText("匯入 JSON"), {
+      target: {
+        files: [
+          new File([JSON.stringify(taskJson)], "imported-page.translation-task.json", {
+            type: "application/json"
+          })
+        ]
+      }
+    });
+
+    expect(await screen.findByText("翻譯完成")).toBeInTheDocument();
+    expect(screen.getByText("已匯入 imported-page.png；JSON 不包含原圖，重新處理前請重新選圖。")).toBeInTheDocument();
+    expect(screen.queryByAltText("上傳圖片預覽")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Ollama 位址")).toHaveValue("http://ollama.imported:11434");
+    expect(screen.getByLabelText("OCR 模型")).toHaveValue("gemma3:latest");
+    expect(screen.getByLabelText("翻譯模型")).toHaveValue("qwen3:latest");
+    expect(screen.getByLabelText("OCR 提示詞模式")).toHaveValue("prompted");
+    expect(screen.getByLabelText("翻譯提示詞模式")).toHaveValue("direct");
+    expect(screen.getByLabelText("來源語言提示")).toHaveValue("日文");
+    expect(screen.getByLabelText("目標語言")).toHaveValue("英文");
+    expect(screen.getByLabelText("逾時秒數")).toHaveValue(45);
+    expect(screen.getByLabelText("panel-a 修正原文")).toHaveValue("こんにちは");
+    expect(screen.getByText("Hello")).toBeInTheDocument();
+    expect(screen.getByLabelText("任務 OCR rendered system")).toHaveValue("Imported OCR system rendered");
+    expect(screen.getByLabelText("任務翻譯 rendered user")).toHaveValue(
+      "Imported translation user rendered"
+    );
+  });
+
+  it("匯入壞格式 JSON 時拒絕並保留目前任務", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+      if (String(input).startsWith("/api/prompts")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              source: "builtin",
+              ocr: { system: "OCR system", user: "OCR user" },
+              translation: { system: "Translation system", user: "Translation user" }
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } }
+          )
+        );
+      }
+
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            models: [
+              { name: "gemma3:latest", model: "gemma3:latest" },
+              { name: "qwen3:latest", model: "qwen3:latest" }
+            ]
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        )
+      );
+    });
+
+    render(<App />);
+
+    await screen.findByText("gemma3:latest");
+
+    const currentTaskJson = {
+      version: 1,
+      image: { filename: "current-page.png" },
+      settings: {
+        ollama_base_url: "http://ollama.current:11434",
+        ocr_model: "gemma3:latest",
+        translation_model: "qwen3:latest",
+        ocr_prompt_mode: "auto",
+        translation_prompt_mode: "prompted",
+        source_language_hint: "自動判斷",
+        target_language: "繁體中文",
+        timeout_seconds: 120
+      },
+      blocks: [{ block_id: "current-block", source_text: "保留這段", confidence: null, position: null }],
+      translations: {
+        "current-block": "保留譯文"
+      },
+      prompts: {
+        ocr: {
+          source: "builtin",
+          system_template: "OCR system",
+          user_template: "OCR user",
+          rendered_system: "Current OCR system rendered",
+          rendered_user: "Current OCR user rendered"
+        },
+        translation: {
+          source: "builtin",
+          system_template: "Translation system",
+          user_template: "Translation user",
+          rendered_system: "Current translation system rendered",
+          rendered_user: "Current translation user rendered"
+        }
+      }
+    };
+
+    fireEvent.change(screen.getByLabelText("匯入 JSON"), {
+      target: {
+        files: [
+          new File([JSON.stringify(currentTaskJson)], "current.translation-task.json", {
+            type: "application/json"
+          })
+        ]
+      }
+    });
+
+    expect(await screen.findByText("保留譯文")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("匯入 JSON"), {
+      target: {
+        files: [
+          new File([JSON.stringify({ version: 1, image: { filename: "bad.png" } })], "bad.json", {
+            type: "application/json"
+          })
+        ]
+      }
+    });
+
+    expect(await screen.findByText("匯入失敗：JSON 欄位不符合匯出格式")).toBeInTheDocument();
+    expect(screen.getByLabelText("current-block 修正原文")).toHaveValue("保留這段");
+    expect(screen.getByText("保留譯文")).toBeInTheDocument();
+    expect(screen.queryByText("bad.png")).not.toBeInTheDocument();
+  });
+
+  it("匯入不支援版本的 JSON 時拒絕", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+      if (String(input).startsWith("/api/prompts")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              source: "builtin",
+              ocr: { system: "OCR system", user: "OCR user" },
+              translation: { system: "Translation system", user: "Translation user" }
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } }
+          )
+        );
+      }
+
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            models: [
+              { name: "gemma3:latest", model: "gemma3:latest" },
+              { name: "qwen3:latest", model: "qwen3:latest" }
+            ]
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        )
+      );
+    });
+
+    render(<App />);
+
+    await screen.findByText("gemma3:latest");
+    fireEvent.change(screen.getByLabelText("匯入 JSON"), {
+      target: {
+        files: [
+          new File(
+            [
+              JSON.stringify({
+                version: 2,
+                image: { filename: "future.png" },
+                settings: {},
+                blocks: [],
+                translations: {},
+                prompts: {}
+              })
+            ],
+            "future.json",
+            { type: "application/json" }
+          )
+        ]
+      }
+    });
+
+    expect(await screen.findByText("匯入失敗：不支援的 JSON 版本")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "開始第一個翻譯任務" })).toBeInTheDocument();
+  });
+
+  it("匯入非 JSON 文字時拒絕且顯示一致錯誤", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+      if (String(input).startsWith("/api/prompts")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              source: "builtin",
+              ocr: { system: "OCR system", user: "OCR user" },
+              translation: { system: "Translation system", user: "Translation user" }
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } }
+          )
+        );
+      }
+
+      return Promise.resolve(
+        new Response(JSON.stringify({ models: [] }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" }
+        })
+      );
+    });
+
+    render(<App />);
+
+    await screen.findByText("目前沒有可用模型");
+    fireEvent.change(screen.getByLabelText("匯入 JSON"), {
+      target: {
+        files: [new File(["not-json"], "broken.json", { type: "application/json" })]
+      }
+    });
+
+    expect(await screen.findByText("匯入失敗：JSON 格式不符")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "開始第一個翻譯任務" })).toBeInTheDocument();
+  });
+
+  it("匯入 JSON 後即使模型不在目前清單仍顯示匯入設定", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+      if (String(input).startsWith("/api/prompts")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              source: "builtin",
+              ocr: { system: "OCR system", user: "OCR user" },
+              translation: { system: "Translation system", user: "Translation user" }
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } }
+          )
+        );
+      }
+
+      return Promise.resolve(
+        new Response(JSON.stringify({ models: [] }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" }
+        })
+      );
+    });
+
+    render(<App />);
+
+    await screen.findByText("目前沒有可用模型");
+    fireEvent.change(screen.getByLabelText("匯入 JSON"), {
+      target: {
+        files: [
+          new File(
+            [
+              JSON.stringify({
+                version: 1,
+                image: { filename: "missing-model-page.png" },
+                settings: {
+                  ollama_base_url: "http://ollama.imported:11434",
+                  ocr_model: "old-ocr:latest",
+                  translation_model: "old-translation:latest",
+                  ocr_prompt_mode: "auto",
+                  translation_prompt_mode: "prompted",
+                  source_language_hint: "日文",
+                  target_language: "繁體中文",
+                  timeout_seconds: 60
+                },
+                blocks: [
+                  {
+                    block_id: "block-1",
+                    source_text: "古い",
+                    confidence: null,
+                    position: null
+                  }
+                ],
+                translations: { "block-1": "舊譯文" },
+                prompts: {
+                  ocr: {
+                    source: "builtin",
+                    system_template: "OCR system",
+                    user_template: "OCR user",
+                    rendered_system: "OCR system rendered",
+                    rendered_user: "OCR user rendered"
+                  },
+                  translation: {
+                    source: "builtin",
+                    system_template: "Translation system",
+                    user_template: "Translation user",
+                    rendered_system: "Translation system rendered",
+                    rendered_user: "Translation user rendered"
+                  }
+                }
+              })
+            ],
+            "missing-model-page.translation-task.json",
+            { type: "application/json" }
+          )
+        ]
+      }
+    });
+
+    expect(await screen.findByText("舊譯文")).toBeInTheDocument();
+    expect(screen.getByLabelText("OCR 模型")).toHaveValue("old-ocr:latest");
+    expect(screen.getByLabelText("翻譯模型")).toHaveValue("old-translation:latest");
+    expect(screen.getByRole("option", { name: "OCR：old-ocr:latest" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "翻譯：old-translation:latest" })).toBeInTheDocument();
+  });
+
+  it("完成後可依目前文字區塊順序匯出純譯文 TXT", async () => {
+    Object.defineProperty(URL, "createObjectURL", {
+      configurable: true,
+      value: vi.fn((value: Blob | MediaSource) => (value instanceof Blob ? "blob:export-txt" : "blob:preview"))
+    });
+    Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: vi.fn() });
+    const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+      if (String(input).startsWith("/api/prompts")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              source: "builtin",
+              ocr: { system: "OCR system", user: "OCR user" },
+              translation: { system: "Translation system", user: "Translation user" }
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } }
+          )
+        );
+      }
+
+      if (String(input).startsWith("/api/ocr")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              blocks: [
+                { id: "panel-a", source_text: "一", confidence: null, position: null },
+                { id: "panel-b", source_text: "二", confidence: null, position: null },
+                { id: "panel-c", source_text: "三", confidence: null, position: null }
+              ],
+              prompt: {
+                source: "builtin",
+                system_template: "OCR system",
+                user_template: "OCR user",
+                rendered_system: "OCR system rendered",
+                rendered_user: "OCR user rendered"
+              },
+              raw_model: { model: "gemma3:latest" }
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } }
+          )
+        );
+      }
+
+      if (String(input).startsWith("/api/translate")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              translations: [
+                { block_id: "panel-b", translated_text: "第二段譯文" },
+                { block_id: "panel-a", translated_text: "第一段譯文" }
+              ],
+              prompt: {
+                source: "builtin",
+                system_template: "Translation system",
+                user_template: "Translation user",
+                rendered_system: "Translation system rendered",
+                rendered_user: "Translation user rendered"
+              },
+              raw_model: { model: "qwen3:latest" }
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } }
+          )
+        );
+      }
+
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            models: [
+              { name: "gemma3:latest", model: "gemma3:latest" },
+              { name: "qwen3:latest", model: "qwen3:latest" }
+            ]
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        )
+      );
+    });
+
+    render(<App />);
+
+    await screen.findByText("gemma3:latest");
+    fireEvent.change(screen.getByLabelText("OCR 模型"), {
+      target: { value: "gemma3:latest" }
+    });
+    fireEvent.change(screen.getByLabelText("翻譯模型"), {
+      target: { value: "qwen3:latest" }
+    });
+    fireEvent.change(screen.getByLabelText("上傳圖片"), {
+      target: { files: [new File(["small"], "page.png", { type: "image/png" })] }
+    });
+
+    expect(await screen.findByText("翻譯完成")).toBeInTheDocument();
+    expect(screen.getByText("尚未翻譯")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "匯出 TXT" }));
+
+    expect(clickSpy).toHaveBeenCalled();
+    expect(await readDownloadedText("text/plain")).toBe("第一段譯文\n第二段譯文\n");
+  });
+
+  it("完成後以第一個無位置資訊文字區塊作為校對焦點並顯示同步狀態", async () => {
+    Object.defineProperty(URL, "createObjectURL", {
+      configurable: true,
+      value: vi.fn(() => "blob:proofreading-sync")
+    });
+    Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: vi.fn() });
+
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+      if (String(input).startsWith("/api/prompts")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              source: "builtin",
+              ocr: { system: "OCR system", user: "OCR user" },
+              translation: { system: "Translation system", user: "Translation user" }
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } }
+          )
+        );
+      }
+
+      if (String(input).startsWith("/api/ocr")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              blocks: [
+                { id: "panel-a", source_text: "一", confidence: null, position: null },
+                { id: "panel-b", source_text: "二", confidence: null, position: null },
+                { id: "panel-c", source_text: "三", confidence: null, position: null }
+              ],
+              prompt: {
+                source: "builtin",
+                system_template: "OCR system",
+                user_template: "OCR user",
+                rendered_system: "OCR system rendered",
+                rendered_user: "OCR user rendered"
+              },
+              raw_model: { model: "gemma3:latest" }
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } }
+          )
+        );
+      }
+
+      if (String(input).startsWith("/api/translate")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              translations: [
+                { block_id: "panel-a", translated_text: "第一段譯文" },
+                { block_id: "panel-b", translated_text: "第二段譯文" },
+                { block_id: "panel-c", translated_text: "第三段譯文" }
+              ],
+              prompt: {
+                source: "builtin",
+                system_template: "Translation system",
+                user_template: "Translation user",
+                rendered_system: "Translation system rendered",
+                rendered_user: "Translation user rendered"
+              },
+              raw_model: { model: "qwen3:latest" }
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } }
+          )
+        );
+      }
+
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            models: [
+              { name: "gemma3:latest", model: "gemma3:latest" },
+              { name: "qwen3:latest", model: "qwen3:latest" }
+            ]
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        )
+      );
+    });
+
+    render(<App />);
+
+    await screen.findByText("gemma3:latest");
+    fireEvent.change(screen.getByLabelText("OCR 模型"), {
+      target: { value: "gemma3:latest" }
+    });
+    fireEvent.change(screen.getByLabelText("翻譯模型"), {
+      target: { value: "qwen3:latest" }
+    });
+    fireEvent.change(screen.getByLabelText("上傳圖片"), {
+      target: { files: [new File(["small"], "page.png", { type: "image/png" })] }
+    });
+
+    expect(await screen.findByText("翻譯完成")).toBeInTheDocument();
+    const syncText = screen.getByText("正在校對第 1／共 3 段");
+    const proofreadingList = screen.getByRole("list", { name: "校對文字區塊" });
+
+    expect(syncText).toBeInTheDocument();
+    expect(proofreadingList).not.toContainElement(syncText);
+    expect([...proofreadingList.children].map((child) => child.getAttribute("role"))).toEqual([
+      "listitem",
+      "listitem",
+      "listitem"
+    ]);
+
+    const firstBlock = screen.getByLabelText("panel-a 修正原文").closest("article");
+    const secondBlock = screen.getByLabelText("panel-b 修正原文").closest("article");
+    const thirdBlock = screen.getByLabelText("panel-c 修正原文").closest("article");
+
+    await waitFor(() => expect(firstBlock).toHaveAttribute("aria-current", "true"));
+    expect(secondBlock).not.toHaveAttribute("aria-current");
+    expect(thirdBlock).not.toHaveAttribute("aria-current");
+  });
+
+  it("可用 ArrowDown 與 J/K 在無位置資訊文字區塊間移動校對焦點", async () => {
+    Object.defineProperty(URL, "createObjectURL", {
+      configurable: true,
+      value: vi.fn(() => "blob:proofreading-keyboard")
+    });
+    Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: vi.fn() });
+
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+      if (String(input).startsWith("/api/prompts")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              source: "builtin",
+              ocr: { system: "OCR system", user: "OCR user" },
+              translation: { system: "Translation system", user: "Translation user" }
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } }
+          )
+        );
+      }
+
+      if (String(input).startsWith("/api/ocr")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              blocks: [
+                { id: "panel-a", source_text: "一", confidence: null, position: null },
+                { id: "panel-b", source_text: "二", confidence: null, position: null },
+                { id: "panel-c", source_text: "三", confidence: null, position: null }
+              ],
+              prompt: {
+                source: "builtin",
+                system_template: "OCR system",
+                user_template: "OCR user",
+                rendered_system: "OCR system rendered",
+                rendered_user: "OCR user rendered"
+              },
+              raw_model: { model: "gemma3:latest" }
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } }
+          )
+        );
+      }
+
+      if (String(input).startsWith("/api/translate")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              translations: [
+                { block_id: "panel-a", translated_text: "第一段譯文" },
+                { block_id: "panel-b", translated_text: "第二段譯文" },
+                { block_id: "panel-c", translated_text: "第三段譯文" }
+              ],
+              prompt: {
+                source: "builtin",
+                system_template: "Translation system",
+                user_template: "Translation user",
+                rendered_system: "Translation system rendered",
+                rendered_user: "Translation user rendered"
+              },
+              raw_model: { model: "qwen3:latest" }
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } }
+          )
+        );
+      }
+
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            models: [
+              { name: "gemma3:latest", model: "gemma3:latest" },
+              { name: "qwen3:latest", model: "qwen3:latest" }
+            ]
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        )
+      );
+    });
+
+    render(<App />);
+
+    await screen.findByText("gemma3:latest");
+    fireEvent.change(screen.getByLabelText("OCR 模型"), {
+      target: { value: "gemma3:latest" }
+    });
+    fireEvent.change(screen.getByLabelText("翻譯模型"), {
+      target: { value: "qwen3:latest" }
+    });
+    fireEvent.change(screen.getByLabelText("上傳圖片"), {
+      target: { files: [new File(["small"], "page.png", { type: "image/png" })] }
+    });
+
+    expect(await screen.findByText("翻譯完成")).toBeInTheDocument();
+
+    const firstBlock = screen.getByLabelText("panel-a 修正原文").closest("article");
+    const secondBlock = screen.getByLabelText("panel-b 修正原文").closest("article");
+
+    firstBlock?.focus();
+    expect(firstBlock).toHaveFocus();
+
+    fireEvent.keyDown(firstBlock!, { key: "ArrowDown" });
+
+    expect(screen.getByText("正在校對第 2／共 3 段")).toBeInTheDocument();
+    expect(firstBlock).not.toHaveAttribute("aria-current");
+    expect(secondBlock).toHaveAttribute("aria-current", "true");
+    expect(secondBlock).toHaveFocus();
+
+    const secondTextarea = screen.getByLabelText("panel-b 修正原文");
+    secondTextarea.focus();
+    fireEvent.keyDown(secondTextarea, { key: "j" });
+    fireEvent.keyDown(secondTextarea, { key: "ArrowDown" });
+
+    expect(screen.getByText("正在校對第 2／共 3 段")).toBeInTheDocument();
+    expect(secondBlock).toHaveAttribute("aria-current", "true");
+
+    const secondCopyButton = screen.getByRole("button", { name: "panel-b 複製譯文" });
+    secondCopyButton.focus();
+    fireEvent.keyDown(secondCopyButton, { key: "j" });
+
+    expect(screen.getByText("正在校對第 2／共 3 段")).toBeInTheDocument();
+    expect(secondBlock).toHaveAttribute("aria-current", "true");
+
+    secondBlock?.focus();
+    fireEvent.keyDown(secondBlock!, { key: "k" });
+
+    expect(screen.getByText("正在校對第 1／共 3 段")).toBeInTheDocument();
+    expect(firstBlock).toHaveAttribute("aria-current", "true");
+    expect(firstBlock).toHaveFocus();
   });
 
   it("完成後變更目標語言但未重新翻譯時，匯出保留該次結果使用的設定", async () => {

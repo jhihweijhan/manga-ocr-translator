@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>漫畫翻譯神器：本機單張漫畫 OCR 與可校對區塊翻譯</title>
+    <meta name="description" content="漫畫翻譯神器是 local-first 的開源工具，用本機 Ollama、FastAPI 與 React/Vite 將單張漫畫圖片轉成可修正文字區塊與區塊譯文。">
+    <link rel="canonical" href="https://jhihweijhan.github.io/manga-ocr-translator/">
+    <link rel="stylesheet" href="landing.css">
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="https://jhihweijhan.github.io/manga-ocr-translator/">
+    <meta property="og:title" content="漫畫翻譯神器：本機單張漫畫 OCR 與可校對區塊翻譯">
+    <meta property="og:description" content="上傳一張漫畫圖片，使用本機 Ollama 產生文字區塊與區塊譯文，保留校對、重新翻譯與匯出流程。">
+    <meta property="og:image" content="https://jhihweijhan.github.io/manga-ocr-translator/assets/landing/product-demo.png">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="漫畫翻譯神器">
+    <meta name="twitter:description" content="本機單張漫畫 OCR 翻譯工具，保留可校對文字區塊。">
+    <meta name="twitter:image" content="https://jhihweijhan.github.io/manga-ocr-translator/assets/landing/product-demo.png">
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "SoftwareApplication",
+            "name": "漫畫翻譯神器",
+            "applicationCategory": "UtilitiesApplication",
+            "operatingSystem": "Windows, macOS, Linux",
+            "description": "Local-first web tool for turning one manga image into editable OCR text blocks and translated block text using a local Ollama server.",
+            "softwareRequirements": "Python with uv, Node.js, npm, Ollama",
+            "url": "https://jhihweijhan.github.io/manga-ocr-translator/",
+            "codeRepository": "https://github.com/jhihweijhan/manga-ocr-translator",
+            "image": "https://jhihweijhan.github.io/manga-ocr-translator/assets/landing/product-demo.png",
+            "offers": {
+              "@type": "Offer",
+              "price": "0",
+              "priceCurrency": "USD"
+            }
+          },
+          {
+            "@type": "FAQPage",
+            "mainEntity": [
+              {
+                "@type": "Question",
+                "name": "漫畫翻譯神器會保存上傳圖片嗎？",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "後端不保存上傳圖片；圖片仍會經過 browser、local backend 與 Ollama，因此這是降低遠端外流風險的 local-first 流程，不是絕對私密保證。"
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "這個 landing page 會載入 React app 嗎？",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "不會。這是放在 docs 目錄的靜態 HTML/CSS 頁面，產品 app 仍由 frontend 目錄中的 React/Vite 專案提供。"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    </script>
+  </head>
+  <body>
+    <a class="skip-link" href="#top">跳到主要內容</a>
+    <header class="site-header" aria-label="主要導覽">
+      <a class="brand" href="#top" aria-label="回到首頁">漫畫翻譯神器</a>
+      <nav>
+        <a href="#demo">Demo</a>
+        <a href="#install">安裝</a>
+        <a href="#privacy">隱私</a>
+        <a href="llms.txt">llms.txt</a>
+      </nav>
+    </header>
+
+    <main id="top">
+      <section class="hero" aria-labelledby="hero-title">
+        <div class="hero-copy">
+          <p class="kicker">Local-first manga OCR translator</p>
+          <h1 id="hero-title">漫畫翻譯神器</h1>
+          <p class="hero-lede">
+            把單張漫畫圖片轉成可修正的文字區塊與區塊譯文。OCR、翻譯模型與提示詞都能檢查，修正原文後再重新翻譯，不需要把流程交給遠端 SaaS。
+          </p>
+          <div class="hero-actions" aria-label="主要連結">
+            <a class="button primary" href="https://github.com/jhihweijhan/manga-ocr-translator">查看 GitHub repository</a>
+            <a class="button secondary" href="#install">閱讀安裝步驟</a>
+          </div>
+          <ul class="hero-facts" aria-label="產品重點">
+            <li>單張圖片</li>
+            <li>本機 Ollama</li>
+            <li>可校對文字區塊</li>
+            <li>JSON 與純譯文 TXT 匯出</li>
+          </ul>
+        </div>
+        <figure class="hero-visual">
+          <img src="assets/landing/product-demo.png" alt="單張漫畫 OCR 工具介面示意，左側圖片預覽，右側文字區塊與區塊譯文校對表">
+          <figcaption>產品示意圖：圖片預覽、文字區塊、區塊譯文與重新翻譯流程在同一個翻譯任務中對照。</figcaption>
+        </figure>
+      </section>
+
+      <section class="summary-band" aria-label="用途摘要">
+        <p>
+          適合想在自己機器上檢查 OCR 與翻譯品質的讀者、譯者與開源工具使用者。頁面本身是靜態 landing；實際翻譯 app 與本頁分離。
+        </p>
+      </section>
+
+      <section class="section split" id="demo" aria-labelledby="demo-title">
+        <div>
+          <h2 id="demo-title">Demo: 從圖片到可校對區塊譯文</h2>
+          <p>
+            上傳圖片並選好 OCR 模型與翻譯模型後，WebUI 會自動連續產生文字區塊與區塊譯文。每個區塊保留可修正原文，讓你先校對模型辨識結果，再只重新翻譯目前文字區塊。
+          </p>
+        </div>
+        <ol class="process-list">
+          <li>
+            <strong>上傳一張 PNG、JPEG 或 WebP。</strong>
+            頁面先保留圖片預覽，模型尚未準備好時會等待你補齊設定。
+          </li>
+          <li>
+            <strong>使用本機 Ollama 模型處理。</strong>
+            OCR 模型產生文字區塊，翻譯模型產生一對一的區塊譯文。
+          </li>
+          <li>
+            <strong>修正原文後重新翻譯。</strong>
+            翻譯階段可單獨重跑，方便比較模型與提示詞效果。
+          </li>
+        </ol>
+      </section>
+
+      <section class="section product-shot" aria-labelledby="shot-title">
+        <div class="shot-copy">
+          <h2 id="shot-title">產品畫面重點</h2>
+          <p>
+            介面把圖片預覽和文字區塊校對表分開呈現，避免把譯文直接覆蓋到圖片上。這讓每段文字的原文、區塊譯文、模型選擇與提示詞來源都能被檢查。
+          </p>
+        </div>
+        <img src="assets/landing/product-demo.png" alt="單張漫畫 OCR 工具介面示意，左側圖片預覽，右側文字區塊與區塊譯文校對表">
+      </section>
+
+      <section class="section install" id="install" aria-labelledby="install-title">
+        <div>
+          <h2 id="install-title">本機安裝</h2>
+          <p>
+            專案使用 FastAPI backend、React/Vite frontend 與 Ollama。以下指令是本機開發流程摘要，完整內容請看 <a href="https://github.com/jhihweijhan/manga-ocr-translator#readme">README</a>。
+          </p>
+        </div>
+        <div class="terminal-grid">
+          <div class="terminal">
+            <h3>1. 啟動 Ollama</h3>
+            <pre><code>ollama serve
+ollama pull gemma3:latest
+ollama pull qwen3:latest</code></pre>
+          </div>
+          <div class="terminal">
+            <h3>2. 啟動 backend</h3>
+            <pre><code>uv sync
+uv run uvicorn app.main:app --app-dir backend --host 127.0.0.1 --port 8000</code></pre>
+          </div>
+          <div class="terminal">
+            <h3>3. 啟動 frontend</h3>
+            <pre><code>cd frontend
+npm install
+npm run dev</code></pre>
+          </div>
+        </div>
+      </section>
+
+      <section class="section privacy" id="privacy" aria-labelledby="privacy-title">
+        <div>
+          <h2 id="privacy-title">Local-first，但邊界要清楚</h2>
+          <p>
+            後端不保存上傳圖片；圖片仍會經過 browser、local backend 與 Ollama，因此這是降低遠端外流風險的 local-first 流程，不是絕對私密保證。
+          </p>
+        </div>
+        <div class="privacy-note">
+          <h3>閱讀產品決策</h3>
+          <p>
+            產品規格與 ADR 記錄了第一版的資料流、非持久化與模型回應處理方式。
+          </p>
+          <a href="PRODUCT.md">開啟 PRODUCT.md</a>
+          <a href="adr/0008-do-not-persist-uploaded-images.md">開啟 ADR 0008</a>
+        </div>
+      </section>
+
+      <section class="section faq" id="faq" aria-labelledby="faq-title">
+        <h2 id="faq-title">FAQ</h2>
+        <div class="faq-list">
+          <article>
+            <h3>漫畫翻譯神器會保存上傳圖片嗎？</h3>
+            <p>
+              後端不保存上傳圖片；圖片仍會經過 browser、local backend 與 Ollama，因此這是降低遠端外流風險的 local-first 流程，不是絕對私密保證。
+            </p>
+          </article>
+          <article>
+            <h3>這個 landing page 會載入 React app 嗎？</h3>
+            <p>
+              不會。這是放在 docs 目錄的靜態 HTML/CSS 頁面，產品 app 仍由 frontend 目錄中的 React/Vite 專案提供。
+            </p>
+          </article>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <p>開源 local-first 漫畫 OCR translator。最後更新：2026-06-05。</p>
+      <a href="llms.txt">AI assistant 專案摘要</a>
+    </footer>
+  </body>
+</html>

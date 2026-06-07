@@ -3,9 +3,7 @@ from typing import Any
 from fastapi import APIRouter, Depends
 
 from app.api_errors import api_error
-from app.ollama_client import OllamaConnectionError
-from app.ollama_client import OllamaClient
-from app.ollama_client import OllamaTimeoutError
+from app.ollama_client import OllamaClient, OllamaConnectionError, OllamaTimeoutError
 
 DEFAULT_OLLAMA_BASE_URL = "http://127.0.0.1:11434"
 DEFAULT_TIMEOUT_SECONDS = 120.0

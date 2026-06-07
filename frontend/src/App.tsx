@@ -92,6 +92,27 @@ type TranslationResponse = {
   };
 };
 
+type ExportedTaskBlock = {
+  block_id: string;
+  source_text: string;
+  confidence: number | null;
+  position: null;
+};
+
+type ExportedTaskDocument = {
+  version: 1;
+  image: {
+    filename: string;
+  };
+  settings: TaskSettings;
+  blocks: ExportedTaskBlock[];
+  translations: Record<string, string>;
+  prompts: {
+    ocr: RenderedPrompt;
+    translation: RenderedPrompt | null;
+  };
+};
+
 const IMAGE_MAX_BYTES = 10 * 1024 * 1024;
 const SUPPORTED_IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
 const SOURCE_LANGUAGE_OPTIONS = ["自動判斷", "日文", "英文", "韓文", "簡體中文", "繁體中文"];
@@ -233,6 +254,179 @@ function isTranslationResponse(
   );
 }
 
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function hasExactKeys(record: Record<string, unknown>, keys: string[]) {
+  const allowedKeys = new Set(keys);
+  return Object.keys(record).length === keys.length && Object.keys(record).every((key) => allowedKeys.has(key));
+}
+
+function parseRenderedPrompt(value: unknown): RenderedPrompt | null {
+  if (!isPlainRecord(value)) {
+    return null;
+  }
+  if (
+    !hasExactKeys(value, [
+      "source",
+      "system_template",
+      "user_template",
+      "rendered_system",
+      "rendered_user"
+    ])
+  ) {
+    return null;
+  }
+  if (
+    typeof value.source !== "string" ||
+    typeof value.system_template !== "string" ||
+    typeof value.user_template !== "string" ||
+    typeof value.rendered_system !== "string" ||
+    typeof value.rendered_user !== "string"
+  ) {
+    return null;
+  }
+  return {
+    source: value.source,
+    system_template: value.system_template,
+    user_template: value.user_template,
+    rendered_system: value.rendered_system,
+    rendered_user: value.rendered_user
+  };
+}
+
+function parseTaskSettings(value: unknown): TaskSettings | null {
+  if (!isPlainRecord(value)) {
+    return null;
+  }
+  if (
+    !hasExactKeys(value, [
+      "ollama_base_url",
+      "ocr_model",
+      "translation_model",
+      "ocr_prompt_mode",
+      "translation_prompt_mode",
+      "source_language_hint",
+      "target_language",
+      "timeout_seconds"
+    ])
+  ) {
+    return null;
+  }
+  if (
+    typeof value.ollama_base_url !== "string" ||
+    typeof value.ocr_model !== "string" ||
+    typeof value.translation_model !== "string" ||
+    !isOcrPromptMode(value.ocr_prompt_mode) ||
+    !isTranslationPromptMode(value.translation_prompt_mode) ||
+    typeof value.source_language_hint !== "string" ||
+    !SOURCE_LANGUAGE_OPTIONS.includes(value.source_language_hint) ||
+    typeof value.target_language !== "string" ||
+    !TARGET_LANGUAGE_OPTIONS.includes(value.target_language) ||
+    typeof value.timeout_seconds !== "number" ||
+    !Number.isFinite(value.timeout_seconds) ||
+    value.timeout_seconds < 1
+  ) {
+    return null;
+  }
+  return {
+    ollama_base_url: value.ollama_base_url,
+    ocr_model: value.ocr_model,
+    translation_model: value.translation_model,
+    ocr_prompt_mode: value.ocr_prompt_mode,
+    translation_prompt_mode: value.translation_prompt_mode,
+    source_language_hint: value.source_language_hint,
+    target_language: value.target_language,
+    timeout_seconds: value.timeout_seconds
+  };
+}
+
+function parseExportedTaskDocument(value: unknown): ExportedTaskDocument {
+  if (!isPlainRecord(value)) {
+    throw new Error("匯入失敗：JSON 必須是物件");
+  }
+  if (!hasExactKeys(value, ["version", "image", "settings", "blocks", "translations", "prompts"])) {
+    throw new Error("匯入失敗：JSON 欄位不符合匯出格式");
+  }
+  if (value.version !== 1) {
+    throw new Error("匯入失敗：不支援的 JSON 版本");
+  }
+  if (
+    !isPlainRecord(value.image) ||
+    !hasExactKeys(value.image, ["filename"]) ||
+    typeof value.image.filename !== "string" ||
+    value.image.filename.trim() === ""
+  ) {
+    throw new Error("匯入失敗：圖片資訊格式不符");
+  }
+  const settings = parseTaskSettings(value.settings);
+  if (!settings) {
+    throw new Error("匯入失敗：設定格式不符");
+  }
+  if (!Array.isArray(value.blocks)) {
+    throw new Error("匯入失敗：文字區塊格式不符");
+  }
+  const blockIds = new Set<string>();
+  const blocks = value.blocks.map((block) => {
+    if (!isPlainRecord(block)) {
+      throw new Error("匯入失敗：文字區塊格式不符");
+    }
+    if (!hasExactKeys(block, ["block_id", "source_text", "confidence", "position"])) {
+      throw new Error("匯入失敗：文字區塊欄位不符");
+    }
+    if (
+      typeof block.block_id !== "string" ||
+      block.block_id.trim() === "" ||
+      typeof block.source_text !== "string" ||
+      !(block.confidence === null || typeof block.confidence === "number") ||
+      block.position !== null
+    ) {
+      throw new Error("匯入失敗：文字區塊內容不符");
+    }
+    if (blockIds.has(block.block_id)) {
+      throw new Error("匯入失敗：文字區塊 ID 重複");
+    }
+    blockIds.add(block.block_id);
+    return {
+      block_id: block.block_id,
+      source_text: block.source_text,
+      confidence: block.confidence,
+      position: block.position
+    };
+  });
+
+  if (!isPlainRecord(value.translations)) {
+    throw new Error("匯入失敗：譯文格式不符");
+  }
+  const translations: Record<string, string> = {};
+  for (const [blockId, translatedText] of Object.entries(value.translations)) {
+    if (!blockIds.has(blockId) || typeof translatedText !== "string") {
+      throw new Error("匯入失敗：譯文 block_id 不符");
+    }
+    translations[blockId] = translatedText;
+  }
+
+  if (!isPlainRecord(value.prompts) || !hasExactKeys(value.prompts, ["ocr", "translation"])) {
+    throw new Error("匯入失敗：提示詞格式不符");
+  }
+  const ocr = parseRenderedPrompt(value.prompts.ocr);
+  const translation =
+    value.prompts.translation === null ? null : parseRenderedPrompt(value.prompts.translation);
+  if (!ocr || (value.prompts.translation !== null && !translation)) {
+    throw new Error("匯入失敗：提示詞內容不符");
+  }
+
+  return {
+    version: 1,
+    image: { filename: value.image.filename },
+    settings,
+    blocks,
+    translations,
+    prompts: { ocr, translation }
+  };
+}
+
 function createApiError(payload: ApiError, fallbackMessage: string): DebuggableError {
   const error = new Error(payload.error.message || fallbackMessage) as DebuggableError;
   if (typeof payload.error.details?.raw_model_response === "string") {
@@ -266,6 +460,15 @@ function scrollReadingFrameTo(frame: HTMLDivElement | null, top: number, left?: 
   }
 }
 
+function readTaskJsonFile(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.addEventListener("load", () => resolve(String(reader.result ?? "")));
+    reader.addEventListener("error", () => reject(reader.error ?? new Error("匯入失敗：無法讀取檔案")));
+    reader.readAsText(file);
+  });
+}
+
 export default function App() {
   const persistedTaskSettings = useRef(readPersistedTaskSettings()).current;
   const [ollamaBaseUrl, setOllamaBaseUrl] = useState(
@@ -277,6 +480,7 @@ export default function App() {
   const [promptStatus, setPromptStatus] = useState<"loading" | "success" | "error">("loading");
   const [promptErrorMessage, setPromptErrorMessage] = useState<string | null>(null);
   const [prompts, setPrompts] = useState<PromptTemplates | null>(null);
+  const [debugSectionOpen, setDebugSectionOpen] = useState(false);
   const [selectedOcrModel, setSelectedOcrModel] = useState(
     persistedTaskSettings.ocr_model ?? ""
   );
@@ -301,6 +505,8 @@ export default function App() {
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreviewUrl, setImagePreviewUrl] = useState<string | null>(null);
   const [imageErrorMessage, setImageErrorMessage] = useState<string | null>(null);
+  const [importErrorMessage, setImportErrorMessage] = useState<string | null>(null);
+  const [importedImageFilename, setImportedImageFilename] = useState<string | null>(null);
   const [taskStatus, setTaskStatus] = useState<
     | "idle"
     | "ready"
@@ -318,17 +524,24 @@ export default function App() {
     null
   );
   const [ocrBlocks, setOcrBlocks] = useState<TextBlock[]>([]);
+  const [activeBlockId, setActiveBlockId] = useState<string | null>(null);
+  const [ocrBlockSourceBaselines, setOcrBlockSourceBaselines] = useState<Record<string, string>>(
+    {}
+  );
   const [translations, setTranslations] = useState<Translation[]>([]);
   const [ocrPrompt, setOcrPrompt] = useState<RenderedPrompt | null>(null);
   const [translationPrompt, setTranslationPrompt] = useState<RenderedPrompt | null>(null);
   const [lastTaskSettings, setLastTaskSettings] = useState<TaskSettings | null>(null);
   const latestModelRequestId = useRef(0);
   const initialOllamaBaseUrl = useRef(ollamaBaseUrl);
+  const preserveUnavailableSelectedModelsForRequestId = useRef<number | null>(null);
+  const latestImportRequestId = useRef(0);
   const latestOcrRunId = useRef(0);
   const latestTranslationRunId = useRef(0);
   const activeOcrAbortController = useRef<AbortController | null>(null);
   const activeTranslationAbortController = useRef<AbortController | null>(null);
   const readingImageFrameRef = useRef<HTMLDivElement | null>(null);
+  const proofreadingBlockRefs = useRef<Record<string, HTMLElement | null>>({});
   const readingPanDragRef = useRef<{
     pointerId: number;
     startX: number;
@@ -344,6 +557,12 @@ export default function App() {
   const [isReadingPanning, setIsReadingPanning] = useState(false);
 
   useEffect(() => {
+    if (modelStatus === "error" || promptStatus === "error") {
+      setDebugSectionOpen(true);
+    }
+  }, [modelStatus, promptStatus]);
+
+  useEffect(() => {
     document.documentElement.dataset.theme = theme;
     try {
       localStorage.setItem(THEME_STORAGE_KEY, theme);
@@ -357,6 +576,18 @@ export default function App() {
     setImagePanX(0);
     scrollReadingFrameTo(readingImageFrameRef.current, 0, 0);
   }, [imagePreviewUrl]);
+
+  useEffect(() => {
+    setActiveBlockId((currentBlockId) => {
+      if (ocrBlocks.length === 0) {
+        return null;
+      }
+      if (currentBlockId && ocrBlocks.some((block) => block.id === currentBlockId)) {
+        return currentBlockId;
+      }
+      return ocrBlocks[0].id;
+    });
+  }, [ocrBlocks]);
 
   useEffect(() => {
     const handleResize = () => {
@@ -486,6 +717,7 @@ export default function App() {
       setTranslationErrorMessage(null);
       setTranslationErrorDebugOutput(null);
       setOcrBlocks([]);
+      setOcrBlockSourceBaselines({});
       setTranslations([]);
       setOcrPrompt(null);
       setTranslationPrompt(null);
@@ -507,6 +739,9 @@ export default function App() {
             return;
           }
           setOcrBlocks(payload.blocks);
+          setOcrBlockSourceBaselines(
+            Object.fromEntries(payload.blocks.map((block) => [block.id, block.source_text]))
+          );
           setOcrPrompt(payload.prompt);
           if (payload.blocks.length > 0 && translationModel) {
             startTranslation(runId, payload.blocks, translationModel, ocrModel);
@@ -566,12 +801,22 @@ export default function App() {
         const availableModelNames = new Set(nextModels.map((model) => model.name));
         setModelErrorMessage(null);
         setModels(nextModels);
+        const shouldPreserveUnavailableModels =
+          preserveUnavailableSelectedModelsForRequestId.current === requestId;
         setSelectedOcrModel((currentModel) =>
-          currentModel && availableModelNames.has(currentModel) ? currentModel : ""
+          currentModel && (availableModelNames.has(currentModel) || shouldPreserveUnavailableModels)
+            ? currentModel
+            : ""
         );
         setSelectedTranslationModel((currentModel) =>
-          currentModel && availableModelNames.has(currentModel) ? currentModel : ""
+          currentModel &&
+          (availableModelNames.has(currentModel) || shouldPreserveUnavailableModels)
+            ? currentModel
+            : ""
         );
+        if (shouldPreserveUnavailableModels) {
+          preserveUnavailableSelectedModelsForRequestId.current = null;
+        }
         setModelStatus("success");
       })
       .catch((error: Error) => {
@@ -600,10 +845,13 @@ export default function App() {
     latestOcrRunId.current += 1;
     latestTranslationRunId.current += 1;
     setOcrBlocks([]);
+    setOcrBlockSourceBaselines({});
     setTranslations([]);
     setOcrPrompt(null);
     setTranslationPrompt(null);
     setLastTaskSettings(null);
+    setImportedImageFilename(null);
+    setImportErrorMessage(null);
     setOcrErrorMessage(null);
     setTranslationErrorMessage(null);
     setTranslationErrorDebugOutput(null);
@@ -644,6 +892,80 @@ export default function App() {
       startOcr(file, selectedOcrModel, selectedTranslationModel);
     } else {
       setTaskStatus("ready");
+    }
+  };
+
+  const applyImportedTaskDocument = (document: ExportedTaskDocument) => {
+    activeOcrAbortController.current?.abort();
+    activeOcrAbortController.current = null;
+    activeTranslationAbortController.current?.abort();
+    activeTranslationAbortController.current = null;
+    latestOcrRunId.current += 1;
+    latestTranslationRunId.current += 1;
+    preserveUnavailableSelectedModelsForRequestId.current = latestModelRequestId.current;
+
+    setOllamaBaseUrl(document.settings.ollama_base_url);
+    setSelectedOcrModel(document.settings.ocr_model);
+    setSelectedTranslationModel(document.settings.translation_model);
+    setOcrPromptMode(document.settings.ocr_prompt_mode);
+    setTranslationPromptMode(document.settings.translation_prompt_mode);
+    setSourceLanguageHint(document.settings.source_language_hint);
+    setTargetLanguage(document.settings.target_language);
+    setTimeoutSeconds(document.settings.timeout_seconds);
+    setImageFile(null);
+    clearImagePreview();
+    setImageErrorMessage(null);
+    setImportErrorMessage(null);
+    setImportedImageFilename(document.image.filename);
+    setOcrBlocks(
+      document.blocks.map((block) => ({
+        id: block.block_id,
+        source_text: block.source_text,
+        confidence: block.confidence,
+        position: block.position
+      }))
+    );
+    setOcrBlockSourceBaselines(
+      Object.fromEntries(document.blocks.map((block) => [block.block_id, block.source_text]))
+    );
+    setTranslations(
+      Object.entries(document.translations).map(([blockId, translatedText]) => ({
+        block_id: blockId,
+        translated_text: translatedText
+      }))
+    );
+    setOcrPrompt(document.prompts.ocr);
+    setTranslationPrompt(document.prompts.translation);
+    setLastTaskSettings(document.settings);
+    setOcrErrorMessage(null);
+    setTranslationErrorMessage(null);
+    setTranslationErrorDebugOutput(null);
+    setTaskStatus("completed");
+  };
+
+  const handleImportJson = async (file: File | undefined) => {
+    if (!file) {
+      return;
+    }
+    const importRequestId = latestImportRequestId.current + 1;
+    latestImportRequestId.current = importRequestId;
+    try {
+      let parsedDocument: unknown;
+      try {
+        parsedDocument = JSON.parse(await readTaskJsonFile(file));
+      } catch {
+        throw new Error("匯入失敗：JSON 格式不符");
+      }
+      if (importRequestId !== latestImportRequestId.current) {
+        return;
+      }
+      const importedDocument = parseExportedTaskDocument(parsedDocument);
+      applyImportedTaskDocument(importedDocument);
+    } catch (error) {
+      if (importRequestId !== latestImportRequestId.current) {
+        return;
+      }
+      setImportErrorMessage(error instanceof Error ? error.message : "匯入失敗：JSON 格式不符");
     }
   };
 
@@ -714,6 +1036,7 @@ export default function App() {
     activeTranslationAbortController.current?.abort();
     activeTranslationAbortController.current = null;
     setOcrBlocks([]);
+    setOcrBlockSourceBaselines({});
     setTranslations([]);
     setOcrErrorMessage(null);
     setTranslationErrorMessage(null);
@@ -736,15 +1059,17 @@ export default function App() {
     setTaskStatus("translation_cancelled");
   };
 
+  const taskImageFilename = imageFile?.name ?? importedImageFilename;
+
   const handleExportJson = () => {
-    if (!imageFile || !ocrPrompt) {
+    if (!taskImageFilename || !ocrPrompt) {
       return;
     }
 
     const exportDocument = {
       version: 1,
       image: {
-        filename: imageFile.name
+        filename: taskImageFilename
       },
       settings: lastTaskSettings ?? {
         ollama_base_url: ollamaBaseUrl,
@@ -776,7 +1101,37 @@ export default function App() {
     const objectUrl = URL.createObjectURL(blob);
     const anchor = document.createElement("a");
     anchor.href = objectUrl;
-    anchor.download = `${imageFile.name}.translation-task.json`;
+    anchor.download = `${taskImageFilename}.translation-task.json`;
+    anchor.click();
+    URL.revokeObjectURL(objectUrl);
+  };
+
+  const getTranslatedText = (blockId: string) =>
+    translations.find((translation) => translation.block_id === blockId)?.translated_text;
+
+  const buildPlainTranslationText = () =>
+    ocrBlocks.map((block) => getTranslatedText(block.id) ?? "").join("\n");
+
+  const handleCopyTranslation = (translatedText: string) => {
+    void navigator.clipboard.writeText(translatedText);
+  };
+
+  const handleCopyAllTranslations = () => {
+    void navigator.clipboard.writeText(buildPlainTranslationText());
+  };
+
+  const handleExportTxt = () => {
+    if (!taskImageFilename || ocrBlocks.length === 0) {
+      return;
+    }
+
+    const blob = new Blob([buildPlainTranslationText()], {
+      type: "text/plain"
+    });
+    const objectUrl = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = objectUrl;
+    anchor.download = `${taskImageFilename}.translations.txt`;
     anchor.click();
     URL.revokeObjectURL(objectUrl);
   };
@@ -784,13 +1139,17 @@ export default function App() {
   const translationByBlockId = new Map(
     translations.map((translation) => [translation.block_id, translation.translated_text])
   );
+  const selectedOcrModelExists = models.some((model) => model.name === selectedOcrModel);
+  const selectedTranslationModelExists = models.some(
+    (model) => model.name === selectedTranslationModel
+  );
   const hasEditableResults =
     (taskStatus === "completed" ||
       taskStatus === "translation_cancelled" ||
       taskStatus === "translation_failed") &&
     ocrBlocks.length > 0;
   const hasExportableResult =
-    Boolean(imageFile && ocrPrompt) &&
+    Boolean(taskImageFilename && ocrPrompt) &&
     (taskStatus === "completed" ||
       taskStatus === "translation_cancelled" ||
       taskStatus === "translation_failed");
@@ -801,6 +1160,8 @@ export default function App() {
   const canZoomOut = imageZoom > IMAGE_ZOOM_MIN;
   const canZoomIn = imageZoom < IMAGE_ZOOM_MAX;
   const canPanReadingImage = imageZoom > IMAGE_ZOOM_MIN;
+  const activeBlockIndex = ocrBlocks.findIndex((block) => block.id === activeBlockId);
+  const proofreadingBlockNumber = activeBlockIndex >= 0 ? activeBlockIndex + 1 : 1;
   const handleZoomOut = () => {
     setImageZoom((currentZoom) => {
       const nextZoom = Math.max(IMAGE_ZOOM_MIN, roundZoom(currentZoom - IMAGE_ZOOM_STEP));
@@ -913,6 +1274,32 @@ export default function App() {
       scrollReadingFrameTo(frame, frame.scrollHeight);
     }
   };
+  const moveProofreadingFocus = (currentIndex: number, direction: -1 | 1) => {
+    const nextIndex = Math.min(Math.max(currentIndex + direction, 0), ocrBlocks.length - 1);
+    const nextBlock = ocrBlocks[nextIndex];
+    if (!nextBlock) {
+      return;
+    }
+    setActiveBlockId(nextBlock.id);
+    proofreadingBlockRefs.current[nextBlock.id]?.focus();
+  };
+  const handleProofreadingBlockKeyDown = (
+    event: KeyboardEvent<HTMLElement>,
+    blockIndex: number
+  ) => {
+    if (event.target !== event.currentTarget) {
+      return;
+    }
+    if (event.key === "ArrowDown" || event.key === "j" || event.key === "J") {
+      event.preventDefault();
+      moveProofreadingFocus(blockIndex, 1);
+      return;
+    }
+    if (event.key === "ArrowUp" || event.key === "k" || event.key === "K") {
+      event.preventDefault();
+      moveProofreadingFocus(blockIndex, -1);
+    }
+  };
   const handleOpenOriginalImage = () => {
     if (!imagePreviewUrl) {
       return;
@@ -1009,6 +1396,9 @@ export default function App() {
                   onChange={(event) => handleOcrModelChange(event.target.value)}
                 >
                   <option value="">請選擇 OCR 模型</option>
+                  {selectedOcrModel && !selectedOcrModelExists ? (
+                    <option value={selectedOcrModel}>OCR：{selectedOcrModel}</option>
+                  ) : null}
                   {models.map((model) => (
                     <option key={model.name} value={model.name}>
                       OCR：{model.name}
@@ -1025,6 +1415,9 @@ export default function App() {
                   onChange={(event) => handleTranslationModelChange(event.target.value)}
                 >
                   <option value="">請選擇翻譯模型</option>
+                  {selectedTranslationModel && !selectedTranslationModelExists ? (
+                    <option value={selectedTranslationModel}>翻譯：{selectedTranslationModel}</option>
+                  ) : null}
                   {models.map((model) => (
                     <option key={model.name} value={model.name}>
                       翻譯：{model.name}
@@ -1084,6 +1477,41 @@ export default function App() {
               />
             </div>
             {imageErrorMessage ? <p className="error-message">{imageErrorMessage}</p> : null}
+            <div className="json-import-row">
+              <input
+                accept="application/json,.json"
+                aria-label="匯入 JSON"
+                disabled={isProcessing}
+                id="task-json-import"
+                onChange={(event) => {
+                  void handleImportJson(event.currentTarget.files?.[0]);
+                  event.currentTarget.value = "";
+                }}
+                type="file"
+              />
+              <label className="secondary-button json-import-label" htmlFor="task-json-import">
+                匯入 JSON
+              </label>
+            </div>
+            {importErrorMessage ? <p className="error-message">{importErrorMessage}</p> : null}
+            {modelStatus === "error" ? (
+              <section className="ollama-guide" aria-labelledby="ollama-guide-heading">
+                <h3 id="ollama-guide-heading">Ollama 連線檢查</h3>
+                <p>模型清單還沒載入成功。先確認本機 Ollama 可以回應，再重新整理模型清單。</p>
+                <ol>
+                  <li>安裝 Ollama：到 ollama.com 下載並完成安裝。</li>
+                  <li>
+                    啟動服務：
+                    <code>ollama serve</code>
+                  </li>
+                  <li>
+                    拉一個模型範例：
+                    <code>ollama pull gemma3:latest</code>
+                  </li>
+                </ol>
+                <p>確認 Ollama 位址是否為 http://127.0.0.1:11434，或改成你的本機服務位址。</p>
+              </section>
+            ) : null}
           </section>
 
           <details className="advanced">
@@ -1174,10 +1602,24 @@ export default function App() {
             {taskStatus === "idle" ? (
               <div className="result-empty">
                 <span className="empty-badge">訳</span>
-                <p>
-                  <strong>選好 OCR 與翻譯模型、上傳一張漫畫圖片</strong>
-                  ，系統會自動辨識文字並翻成你的目標語言。圖片只在你的電腦上處理。
-                </p>
+                <div className="onboarding-copy">
+                  <h3>開始第一個翻譯任務</h3>
+                  <p>先把本機模型與圖片準備好，系統會自動辨識文字並翻成你的目標語言。</p>
+                  <ol className="onboarding-steps">
+                    <li>
+                      <strong>確認 Ollama 位址與模型清單</strong>
+                      <span>預設使用 http://127.0.0.1:11434。</span>
+                    </li>
+                    <li>
+                      <strong>選擇 OCR 模型與翻譯模型</strong>
+                      <span>兩個下拉都選定後，任務才會開始。</span>
+                    </li>
+                    <li>
+                      <strong>上傳單張漫畫圖片後自動處理</strong>
+                      <span>圖片只在你的電腦上處理，完成後可檢查與修正文字區塊。</span>
+                    </li>
+                  </ol>
+                </div>
               </div>
             ) : null}
             {taskStatus === "ready" ? (
@@ -1253,6 +1695,11 @@ export default function App() {
                 {ocrBlocks.length === 0 ? <p className="muted">未偵測到可翻譯文字</p> : null}
               </>
             ) : null}
+            {importedImageFilename && !imageFile ? (
+              <p className="muted">
+                已匯入 {importedImageFilename}；JSON 不包含原圖，重新處理前請重新選圖。
+              </p>
+            ) : null}
             {hasExportableResult ? (
               <div className="result-actions">
                 {ocrBlocks.length > 0 ? (
@@ -1272,129 +1719,193 @@ export default function App() {
                     >
                       重新處理
                     </button>
+                    <button
+                      type="button"
+                      className="secondary-button"
+                      disabled={translations.length === 0}
+                      onClick={handleCopyAllTranslations}
+                    >
+                      複製全部譯文
+                    </button>
                   </>
                 ) : null}
                 <button type="button" className="secondary-button" onClick={handleExportJson}>
                   匯出 JSON
                 </button>
+                {ocrBlocks.length > 0 ? (
+                  <button type="button" className="secondary-button" onClick={handleExportTxt}>
+                    匯出 TXT
+                  </button>
+                ) : null}
               </div>
             ) : null}
-            {imagePreviewUrl ? (
+            {imagePreviewUrl || hasEditableResults ? (
               <div className="reading-view">
                 <div className="reading-media">
-                  <div className="reading-toolbar" role="toolbar" aria-label="閱讀控制">
-                    <button
-                      type="button"
-                      className="reading-tool-button"
-                      aria-label="縮小"
-                      disabled={!canZoomOut}
-                      onClick={handleZoomOut}
-                    >
-                      -
-                    </button>
-                    <button
-                      type="button"
-                      className="reading-tool-button"
-                      aria-label="放大"
-                      disabled={!canZoomIn}
-                      onClick={handleZoomIn}
-                    >
-                      +
-                    </button>
-                    <button
-                      type="button"
-                      className="reading-tool-button"
-                      aria-label="重設縮放"
-                      onClick={handleZoomReset}
-                    >
-                      Fit
-                    </button>
-                    <button
-                      type="button"
-                      className="reading-tool-button"
-                      aria-label="開啟原圖"
-                      onClick={handleOpenOriginalImage}
-                    >
-                      ↗
-                    </button>
-                  </div>
-                  <div
-                    ref={readingImageFrameRef}
-                    aria-label="漫畫頁閱讀區"
-                    className={[
-                      "reading-image-frame",
-                      canPanReadingImage ? "is-pannable" : "",
-                      isReadingPanning ? "is-panning" : ""
-                    ]
-                      .filter(Boolean)
-                      .join(" ")}
-                    onKeyDown={handleReadingKeyDown}
-                    onPointerCancel={handleReadingPointerUp}
-                    onPointerDown={handleReadingPointerDown}
-                    onPointerMove={handleReadingPointerMove}
-                    onPointerUp={handleReadingPointerUp}
-                    role="region"
-                    tabIndex={0}
-                  >
-                    <img
-                      alt="上傳圖片預覽"
-                      className={imageZoom === 1 ? "reading-image is-fit" : "reading-image"}
-                      src={imagePreviewUrl}
-                      style={readingImageStyle}
-                    />
-                  </div>
-                </div>
-                <div className="reading-side" role={hasEditableResults ? "list" : undefined}>
-                  {hasEditableResults
-                    ? ocrBlocks.map((block, blockIndex) => {
-                        const translated = translationByBlockId.get(block.id);
-                        const blockNumberId = `block-number-${block.id}`;
-                        const translationLabelId = `translation-label-${block.id}`;
-                        const translationTextId = `translation-text-${block.id}`;
-                        return (
-                          <article
-                            className="block-card"
-                            key={block.id}
-                            role="listitem"
-                            tabIndex={0}
-                            aria-labelledby={`${blockNumberId} ${translationLabelId} ${translationTextId}`}
+                  {imagePreviewUrl ? (
+                    <>
+                      <div className="reading-toolbar-strip">
+                        <div className="reading-toolbar" role="toolbar" aria-label="閱讀控制">
+                          <button
+                            type="button"
+                            className="reading-tool-button"
+                            aria-label="縮小"
+                            disabled={!canZoomOut}
+                            onClick={handleZoomOut}
                           >
-                            <span
-                              className="block-tag"
-                              id={blockNumberId}
-                              aria-label={`第 ${blockIndex + 1} 段`}
-                            >
-                              {blockIndex + 1}
-                            </span>
-                            <div className="source-track">
-                              <label
-                                className="source-text-label"
-                                htmlFor={`source-text-${block.id}`}
-                              >
-                                {block.id} 修正原文
-                              </label>
-                              <textarea
-                                id={`source-text-${block.id}`}
-                                value={block.source_text}
-                                onChange={(event) =>
-                                  handleSourceTextChange(block.id, event.target.value)
+                            -
+                          </button>
+                          <button
+                            type="button"
+                            className="reading-tool-button"
+                            aria-label="放大"
+                            disabled={!canZoomIn}
+                            onClick={handleZoomIn}
+                          >
+                            +
+                          </button>
+                          <button
+                            type="button"
+                            className="reading-tool-button"
+                            aria-label="重設縮放"
+                            onClick={handleZoomReset}
+                          >
+                            Fit
+                          </button>
+                          <button
+                            type="button"
+                            className="reading-tool-button"
+                            aria-label="開啟原圖"
+                            onClick={handleOpenOriginalImage}
+                          >
+                            ↗
+                          </button>
+                        </div>
+                      </div>
+                      <div
+                        ref={readingImageFrameRef}
+                        aria-label="漫畫頁閱讀區"
+                        className={[
+                          "reading-image-frame",
+                          canPanReadingImage ? "is-pannable" : "",
+                          isReadingPanning ? "is-panning" : ""
+                        ]
+                          .filter(Boolean)
+                          .join(" ")}
+                        onKeyDown={handleReadingKeyDown}
+                        onPointerCancel={handleReadingPointerUp}
+                        onPointerDown={handleReadingPointerDown}
+                        onPointerMove={handleReadingPointerMove}
+                        onPointerUp={handleReadingPointerUp}
+                        role="region"
+                        tabIndex={0}
+                      >
+                        <img
+                          alt="上傳圖片預覽"
+                          className={imageZoom === 1 ? "reading-image is-fit" : "reading-image"}
+                          src={imagePreviewUrl}
+                          style={readingImageStyle}
+                        />
+                      </div>
+                    </>
+                  ) : (
+                    <div className="reading-image-missing" role="note">
+                      <span className="empty-badge">無原圖</span>
+                      <p>這份 JSON 只保存文字、設定與提示詞，請重新選圖後再重新處理。</p>
+                    </div>
+                  )}
+                </div>
+                <div className="reading-side">
+                  {hasEditableResults ? (
+                    <p className="proofreading-sync" aria-live="polite">
+                      正在校對第 {proofreadingBlockNumber}／共 {ocrBlocks.length} 段
+                    </p>
+                  ) : null}
+                  {hasEditableResults
+                    ? (
+                        <div className="proofreading-list" role="list" aria-label="校對文字區塊">
+                          {ocrBlocks.map((block, blockIndex) => {
+                            const translated = translationByBlockId.get(block.id);
+                            const isSourceDirty =
+                              ocrBlockSourceBaselines[block.id] !== undefined &&
+                              block.source_text !== ocrBlockSourceBaselines[block.id];
+                            const isActiveBlock = block.id === activeBlockId;
+                            const blockNumberId = `block-number-${block.id}`;
+                            const translationLabelId = `translation-label-${block.id}`;
+                            const translationTextId = `translation-text-${block.id}`;
+                            return (
+                              <article
+                                className={isActiveBlock ? "block-card is-active" : "block-card"}
+                                key={block.id}
+                                role="listitem"
+                                tabIndex={isActiveBlock ? 0 : -1}
+                                ref={(element) => {
+                                  proofreadingBlockRefs.current[block.id] = element;
+                                }}
+                                aria-current={isActiveBlock ? "true" : undefined}
+                                aria-labelledby={`${blockNumberId} ${translationLabelId} ${translationTextId}`}
+                                onClick={() => setActiveBlockId(block.id)}
+                                onFocus={() => setActiveBlockId(block.id)}
+                                onKeyDown={(event) =>
+                                  handleProofreadingBlockKeyDown(event, blockIndex)
                                 }
-                              />
-                            </div>
-                            <div className="translation-track">
-                              <span className="trans-label" id={translationLabelId}>
-                                譯文
-                              </span>
-                              <p
-                                className={translated ? "translated" : "translated is-empty"}
-                                id={translationTextId}
                               >
-                                {translated ?? "尚未翻譯"}
-                              </p>
-                            </div>
-                          </article>
-                        );
-                      })
+                                <span
+                                  className="block-tag"
+                                  id={blockNumberId}
+                                  aria-label={`第 ${blockIndex + 1} 段`}
+                                >
+                                  {blockIndex + 1}
+                                </span>
+                                <div className="source-track">
+                                  <label
+                                    className="source-text-label"
+                                    htmlFor={`source-text-${block.id}`}
+                                  >
+                                    {block.id} 修正原文
+                                  </label>
+                                  {isSourceDirty ? (
+                                    <span className="dirty-indicator">已修改</span>
+                                  ) : null}
+                                  <textarea
+                                    id={`source-text-${block.id}`}
+                                    value={block.source_text}
+                                    onChange={(event) =>
+                                      handleSourceTextChange(block.id, event.target.value)
+                                    }
+                                  />
+                                </div>
+                                <div className="translation-track">
+                                  <div className="translation-header">
+                                    <span className="trans-label" id={translationLabelId}>
+                                      譯文
+                                    </span>
+                                    <button
+                                      type="button"
+                                      className="inline-action"
+                                      aria-label={`${block.id} 複製譯文`}
+                                      disabled={!translated}
+                                      onClick={() => {
+                                        if (translated) {
+                                          handleCopyTranslation(translated);
+                                        }
+                                      }}
+                                    >
+                                      複製譯文
+                                    </button>
+                                  </div>
+                                  <p
+                                    className={translated ? "translated" : "translated is-empty"}
+                                    id={translationTextId}
+                                  >
+                                    {translated ?? "尚未翻譯"}
+                                  </p>
+                                </div>
+                              </article>
+                            );
+                          })}
+                        </div>
+                      )
                     : isProcessing ? (
                         <p className="muted reading-hint">辨識與翻譯進行中，譯文會逐一出現在這裡…</p>
                       ) : (
@@ -1407,7 +1918,11 @@ export default function App() {
         </section>
       </div>
 
-      <details className="debug-section">
+      <details
+        className="debug-section"
+        open={debugSectionOpen}
+        onToggle={(event) => setDebugSectionOpen(event.currentTarget.open)}
+      >
         <summary>模型清單與提示詞檢視</summary>
         <div className="debug-grid">
           <section aria-labelledby="model-list-heading">
@@ -1471,6 +1986,53 @@ export default function App() {
                   </div>
                 </div>
               </>
+            ) : null}
+            {ocrPrompt ? (
+              <section aria-labelledby="imported-prompt-heading">
+                <h3 id="imported-prompt-heading">任務 rendered prompt</h3>
+                <div className="prompt-grid">
+                  <div className="field">
+                    <label htmlFor="imported-ocr-rendered-system">任務 OCR rendered system</label>
+                    <textarea
+                      id="imported-ocr-rendered-system"
+                      readOnly
+                      value={ocrPrompt.rendered_system}
+                    />
+                  </div>
+                  <div className="field">
+                    <label htmlFor="imported-ocr-rendered-user">任務 OCR rendered user</label>
+                    <textarea
+                      id="imported-ocr-rendered-user"
+                      readOnly
+                      value={ocrPrompt.rendered_user}
+                    />
+                  </div>
+                  {translationPrompt ? (
+                    <>
+                      <div className="field">
+                        <label htmlFor="imported-translation-rendered-system">
+                          任務翻譯 rendered system
+                        </label>
+                        <textarea
+                          id="imported-translation-rendered-system"
+                          readOnly
+                          value={translationPrompt.rendered_system}
+                        />
+                      </div>
+                      <div className="field">
+                        <label htmlFor="imported-translation-rendered-user">
+                          任務翻譯 rendered user
+                        </label>
+                        <textarea
+                          id="imported-translation-rendered-user"
+                          readOnly
+                          value={translationPrompt.rendered_user}
+                        />
+                      </div>
+                    </>
+                  ) : null}
+                </div>
+              </section>
             ) : null}
           </section>
         </div>

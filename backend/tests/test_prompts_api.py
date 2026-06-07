@@ -1,9 +1,8 @@
 from pathlib import Path
 
-from fastapi.testclient import TestClient
-
 from app.main import app
 from app.routes.prompts import get_prompt_file_path
+from fastapi.testclient import TestClient
 
 
 def test_prompts_route_returns_builtin_templates_when_prompts_toml_is_absent(

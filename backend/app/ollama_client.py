@@ -56,7 +56,12 @@ class OllamaClient:
             ) as client:
                 response = await client.post(f"{base_url.rstrip('/')}/api/generate", json=payload)
                 response.raise_for_status()
-                generated = response.json()
+                try:
+                    generated = response.json()
+                except ValueError as exc:
+                    raise OllamaInvalidResponseError(
+                        "Expected /api/generate to return valid JSON."
+                    ) from exc
                 if not isinstance(generated, dict):
                     raise OllamaInvalidResponseError(
                         "Expected /api/generate to return a JSON object."

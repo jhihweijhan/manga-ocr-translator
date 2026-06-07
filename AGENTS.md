@@ -14,6 +14,8 @@ docker compose 的指令是 docker compose。
 
 執行計畫性的任務時，每個任務都要和我一起協同作業和討論。
 
+Design-first 文件誠實性規則：design-first 的 ADR 與 PRODUCT/TECH 規格段落，在對應程式碼落地前，必須帶 `Status: Proposed（尚未實作）` 並使用提案式語氣；不得寫進 PRODUCT/TECH 主規格行為清單而沒有未實作標註。
+
 ## Agent skills
 
 ### Issue tracker

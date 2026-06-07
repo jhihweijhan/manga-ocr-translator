@@ -1,11 +1,10 @@
 import asyncio
 import json
 from pathlib import Path
+from typing import Any
 
 import httpx
 import pytest
-from fastapi.testclient import TestClient
-
 from app.main import app
 from app.ollama_client import OllamaClient
 from app.routes.prompts import get_prompt_file_path
@@ -14,6 +13,7 @@ from app.routes.translate import (
     generate_translation_with_disconnect_watch,
     get_ollama_client,
 )
+from fastapi.testclient import TestClient
 
 
 class TimeoutOllamaClient:
@@ -74,7 +74,7 @@ def test_translate_route_uses_default_timeout_when_request_omits_timeout(
 def test_translate_route_sends_all_blocks_to_ollama_generate_and_returns_input_order(
     tmp_path: Path,
 ) -> None:
-    captured_requests: list[dict[str, object]] = []
+    captured_requests: list[dict[str, Any]] = []
 
     async def handler(request: httpx.Request) -> httpx.Response:
         captured_requests.append(
@@ -160,7 +160,7 @@ def test_translate_route_sends_all_blocks_to_ollama_generate_and_returns_input_o
 def test_translate_route_can_send_direct_text_without_prompt_or_json_format(
     tmp_path: Path,
 ) -> None:
-    captured_requests: list[dict[str, object]] = []
+    captured_requests: list[dict[str, Any]] = []
 
     async def handler(request: httpx.Request) -> httpx.Response:
         captured_requests.append(json.loads(request.content.decode("utf-8")))
@@ -563,6 +563,72 @@ def test_translate_route_returns_timeout_error_envelope(tmp_path: Path) -> None:
     assert response.json()["error"]["stage"] == "translation"
 
 
+def test_translate_route_returns_model_request_failed_for_upstream_http_error(
+    tmp_path: Path,
+) -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(404, json={"error": "model not found"})
+
+    app.dependency_overrides[get_ollama_client] = lambda: OllamaClient(
+        transport=httpx.MockTransport(handler)
+    )
+    app.dependency_overrides[get_prompt_file_path] = lambda: tmp_path / "prompts.toml"
+
+    try:
+        response = TestClient(app).post(
+            "/api/translate",
+            json={
+                "ollama_base_url": "http://ollama.test",
+                "translation_model": "missing-model:latest",
+                "source_language_hint": "自動判斷",
+                "target_language": "繁體中文",
+                "timeout_seconds": 7,
+                "blocks": [
+                    {"id": "block-1", "source_text": "第一段", "confidence": None, "position": None}
+                ],
+            },
+        )
+    finally:
+        app.dependency_overrides = {}
+
+    assert response.status_code == 502
+    assert response.json()["error"]["code"] == "model_request_failed"
+    assert response.json()["error"]["stage"] == "translation"
+
+
+def test_translate_route_returns_unreachable_error_for_upstream_connection_error(
+    tmp_path: Path,
+) -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("Connection refused", request=request)
+
+    app.dependency_overrides[get_ollama_client] = lambda: OllamaClient(
+        transport=httpx.MockTransport(handler)
+    )
+    app.dependency_overrides[get_prompt_file_path] = lambda: tmp_path / "prompts.toml"
+
+    try:
+        response = TestClient(app).post(
+            "/api/translate",
+            json={
+                "ollama_base_url": "http://ollama.test",
+                "translation_model": "qwen3:latest",
+                "source_language_hint": "自動判斷",
+                "target_language": "繁體中文",
+                "timeout_seconds": 7,
+                "blocks": [
+                    {"id": "block-1", "source_text": "第一段", "confidence": None, "position": None}
+                ],
+            },
+        )
+    finally:
+        app.dependency_overrides = {}
+
+    assert response.status_code == 502
+    assert response.json()["error"]["code"] == "ollama_unreachable"
+    assert response.json()["error"]["stage"] == "translation"
+
+
 def test_translate_route_returns_prompt_error_for_malformed_prompt_template(
     tmp_path: Path,
 ) -> None:
@@ -636,6 +702,39 @@ def test_translate_route_rejects_non_object_ollama_generate_payload_as_invalid_m
     assert response.json()["error"]["stage"] == "translation"
 
 
+def test_translate_route_rejects_invalid_ollama_generate_json_body_as_invalid_model_json(
+    tmp_path: Path,
+) -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=b"not-json")
+
+    app.dependency_overrides[get_ollama_client] = lambda: OllamaClient(
+        transport=httpx.MockTransport(handler)
+    )
+    app.dependency_overrides[get_prompt_file_path] = lambda: tmp_path / "prompts.toml"
+
+    try:
+        response = TestClient(app).post(
+            "/api/translate",
+            json={
+                "ollama_base_url": "http://ollama.test",
+                "translation_model": "qwen3:latest",
+                "source_language_hint": "自動判斷",
+                "target_language": "繁體中文",
+                "timeout_seconds": 7,
+                "blocks": [
+                    {"id": "block-1", "source_text": "第一段", "confidence": None, "position": None}
+                ],
+            },
+        )
+    finally:
+        app.dependency_overrides = {}
+
+    assert response.status_code == 502
+    assert response.json()["error"]["code"] == "invalid_model_json"
+    assert response.json()["error"]["stage"] == "translation"
+
+
 def test_translate_upstream_task_is_cancelled_when_client_disconnects() -> None:
     class DisconnectingRequest:
         def __init__(self) -> None:
@@ -656,10 +755,11 @@ def test_translate_upstream_task_is_cancelled_when_client_disconnects() -> None:
             timeout_seconds: float,
         ) -> dict[str, object]:
             try:
-                await asyncio.Future()
+                await asyncio.Future[None]()
             except asyncio.CancelledError:
                 self.cancelled = True
                 raise
+            raise AssertionError("generate should have been cancelled")
 
     request = DisconnectingRequest()
     ollama_client = HangingOllamaClient()

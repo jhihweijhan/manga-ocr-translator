@@ -1,0 +1,87 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720" role="img" aria-labelledby="title desc">
+  <title id="title">Manga OCR Translator product demo</title>
+  <desc id="desc">A static product-style screenshot showing one manga image beside editable OCR text blocks and translated block text.</desc>
+  <defs>
+    <filter id="shadow" x="-12%" y="-12%" width="124%" height="124%">
+      <feDropShadow dx="0" dy="10" stdDeviation="10" flood-color="#173530" flood-opacity="0.16"/>
+    </filter>
+    <clipPath id="pageClip">
+      <rect x="62" y="86" width="422" height="548" rx="8"/>
+    </clipPath>
+  </defs>
+
+  <rect width="1280" height="720" fill="#eef6f3"/>
+  <rect x="28" y="30" width="1224" height="660" rx="18" fill="#f9fbfa" stroke="#20312d" stroke-width="2"/>
+
+  <g transform="translate(50 58)">
+    <rect width="1180" height="604" rx="12" fill="#ffffff" stroke="#d5e1dc"/>
+    <rect width="1180" height="56" rx="12" fill="#173530"/>
+    <rect y="44" width="1180" height="12" fill="#173530"/>
+    <circle cx="30" cy="28" r="7" fill="#f26d4b"/>
+    <circle cx="54" cy="28" r="7" fill="#f3b84f"/>
+    <circle cx="78" cy="28" r="7" fill="#20a77d"/>
+    <text x="108" y="34" fill="#f5fbf8" font-family="ui-sans-serif, system-ui, sans-serif" font-size="18" font-weight="700">漫畫翻譯神器</text>
+    <text x="920" y="34" fill="#a9c8be" font-family="ui-sans-serif, system-ui, sans-serif" font-size="14">Ollama: 127.0.0.1:11434</text>
+
+    <g filter="url(#shadow)">
+      <rect x="42" y="78" width="462" height="568" rx="12" fill="#e8f0ed" stroke="#20312d" stroke-width="2"/>
+      <g clip-path="url(#pageClip)">
+        <rect x="62" y="86" width="422" height="548" fill="#fbfaf6"/>
+        <rect x="86" y="112" width="172" height="188" fill="#1c2f2b"/>
+        <rect x="278" y="112" width="182" height="188" fill="#e8d8c9"/>
+        <rect x="86" y="322" width="374" height="128" fill="#dfd6ca"/>
+        <rect x="86" y="472" width="176" height="136" fill="#c8d9d1"/>
+        <rect x="284" y="472" width="176" height="136" fill="#20312d"/>
+        <path d="M278 300c44-48 98-48 182 0v22H278z" fill="#f26d4b"/>
+        <path d="M86 450c80-52 204-52 374 0v22H86z" fill="#1aa27b"/>
+        <ellipse cx="366" cy="198" rx="78" ry="42" fill="#ffffff" stroke="#20312d" stroke-width="5"/>
+        <path d="M326 236l-18 38 48-30" fill="#ffffff" stroke="#20312d" stroke-width="5" stroke-linejoin="round"/>
+        <text x="312" y="196" fill="#20312d" font-family="ui-sans-serif, system-ui, sans-serif" font-size="22" font-weight="800">えっ?</text>
+        <ellipse cx="190" cy="388" rx="94" ry="38" fill="#ffffff" stroke="#20312d" stroke-width="5"/>
+        <path d="M246 421l42 30-18-40" fill="#ffffff" stroke="#20312d" stroke-width="5" stroke-linejoin="round"/>
+        <text x="132" y="393" fill="#20312d" font-family="ui-sans-serif, system-ui, sans-serif" font-size="20" font-weight="800">行こう</text>
+        <rect x="62" y="86" width="422" height="548" fill="none" stroke="#20312d" stroke-width="3"/>
+      </g>
+      <rect x="76" y="100" width="124" height="30" rx="15" fill="#173530"/>
+      <text x="96" y="121" fill="#ffffff" font-family="ui-sans-serif, system-ui, sans-serif" font-size="14" font-weight="700">單張圖片</text>
+    </g>
+
+    <g transform="translate(538 78)">
+      <rect width="598" height="568" rx="12" fill="#f7fbf9" stroke="#20312d" stroke-width="2"/>
+      <g transform="translate(26 24)">
+        <rect width="546" height="54" rx="8" fill="#173530"/>
+        <text x="22" y="34" fill="#f5fbf8" font-family="ui-sans-serif, system-ui, sans-serif" font-size="18" font-weight="800">文字區塊校對</text>
+        <rect x="370" y="14" width="154" height="26" rx="13" fill="#f26d4b"/>
+        <text x="396" y="32" fill="#1c1714" font-family="ui-sans-serif, system-ui, sans-serif" font-size="13" font-weight="800">重新翻譯</text>
+
+        <g transform="translate(0 86)">
+          <rect width="546" height="128" rx="8" fill="#ffffff" stroke="#1aa27b" stroke-width="3"/>
+          <text x="18" y="30" fill="#173530" font-family="ui-sans-serif, system-ui, sans-serif" font-size="14" font-weight="800">block-1 修正原文</text>
+          <rect x="18" y="46" width="232" height="54" rx="6" fill="#edf5f2" stroke="#bed2ca"/>
+          <text x="34" y="79" fill="#20312d" font-family="ui-sans-serif, system-ui, sans-serif" font-size="22" font-weight="800">えっ?</text>
+          <text x="294" y="30" fill="#173530" font-family="ui-sans-serif, system-ui, sans-serif" font-size="14" font-weight="800">區塊譯文</text>
+          <rect x="294" y="46" width="224" height="54" rx="6" fill="#fff6f1" stroke="#f1c6b8"/>
+          <text x="310" y="79" fill="#20312d" font-family="ui-sans-serif, system-ui, sans-serif" font-size="22" font-weight="800">咦？</text>
+        </g>
+
+        <g transform="translate(0 236)">
+          <rect width="546" height="128" rx="8" fill="#ffffff" stroke="#d5e1dc" stroke-width="2"/>
+          <text x="18" y="30" fill="#173530" font-family="ui-sans-serif, system-ui, sans-serif" font-size="14" font-weight="800">block-2 修正原文</text>
+          <rect x="18" y="46" width="232" height="54" rx="6" fill="#edf5f2" stroke="#bed2ca"/>
+          <text x="34" y="79" fill="#20312d" font-family="ui-sans-serif, system-ui, sans-serif" font-size="22" font-weight="800">行こう</text>
+          <text x="294" y="30" fill="#173530" font-family="ui-sans-serif, system-ui, sans-serif" font-size="14" font-weight="800">區塊譯文</text>
+          <rect x="294" y="46" width="224" height="54" rx="6" fill="#fff6f1" stroke="#f1c6b8"/>
+          <text x="310" y="79" fill="#20312d" font-family="ui-sans-serif, system-ui, sans-serif" font-size="22" font-weight="800">走吧。</text>
+        </g>
+
+        <g transform="translate(0 392)">
+          <rect width="546" height="76" rx="8" fill="#e9f5f0" stroke="#a9c8be"/>
+          <text x="18" y="30" fill="#173530" font-family="ui-sans-serif, system-ui, sans-serif" font-size="14" font-weight="800">狀態</text>
+          <text x="18" y="54" fill="#20312d" font-family="ui-sans-serif, system-ui, sans-serif" font-size="18">正在校對第 1／共 2 段</text>
+          <rect x="362" y="20" width="156" height="36" rx="18" fill="#173530"/>
+          <text x="392" y="44" fill="#f5fbf8" font-family="ui-sans-serif, system-ui, sans-serif" font-size="14" font-weight="800">匯出純譯文 TXT</text>
+        </g>
+      </g>
+    </g>
+  </g>
+</svg>

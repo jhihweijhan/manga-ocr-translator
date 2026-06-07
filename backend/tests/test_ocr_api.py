@@ -1,11 +1,10 @@
 import asyncio
 import json
 from pathlib import Path
+from typing import Any
 
 import httpx
 import pytest
-from fastapi.testclient import TestClient
-
 from app.main import app
 from app.ollama_client import OllamaClient
 from app.routes.ocr import (
@@ -14,6 +13,7 @@ from app.routes.ocr import (
     get_ollama_client,
 )
 from app.routes.prompts import get_prompt_file_path
+from fastapi.testclient import TestClient
 
 
 class TimeoutOllamaClient:
@@ -26,10 +26,50 @@ class TimeoutOllamaClient:
         raise TimeoutError("Timed out")
 
 
+@pytest.mark.parametrize(
+    ("filename", "image_bytes", "content_type"),
+    [
+        ("page.png", b"\x89PNG\r\n\x1a\nsmall", "image/png"),
+        ("page.jpg", b"\xff\xd8\xffjpeg", "image/jpeg"),
+        ("page.webp", b"RIFFxxxxWEBPsmall", "image/webp"),
+    ],
+)
+def test_ocr_route_accepts_supported_image_magic_bytes(
+    tmp_path: Path,
+    filename: str,
+    image_bytes: bytes,
+    content_type: str,
+) -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"model": "gemma3:latest", "response": '{"blocks":[]}'})
+
+    app.dependency_overrides[get_ollama_client] = lambda: OllamaClient(
+        transport=httpx.MockTransport(handler)
+    )
+    app.dependency_overrides[get_prompt_file_path] = lambda: tmp_path / "prompts.toml"
+
+    try:
+        response = TestClient(app).post(
+            "/api/ocr",
+            data={
+                "ollama_base_url": "http://ollama.test",
+                "ocr_model": "gemma3:latest",
+                "source_language_hint": "自動判斷",
+                "timeout_seconds": "7",
+            },
+            files={"image": (filename, image_bytes, content_type)},
+        )
+    finally:
+        app.dependency_overrides = {}
+
+    assert response.status_code == 200
+    assert response.json()["blocks"] == []
+
+
 def test_ocr_route_sends_image_to_ollama_generate_and_returns_text_blocks(
     tmp_path: Path,
 ) -> None:
-    captured_requests: list[dict[str, object]] = []
+    captured_requests: list[dict[str, Any]] = []
 
     async def handler(request: httpx.Request) -> httpx.Response:
         captured_requests.append(
@@ -97,7 +137,7 @@ def test_ocr_route_sends_image_to_ollama_generate_and_returns_text_blocks(
 def test_ocr_route_uses_plain_text_mode_for_glm_ocr_and_splits_text_blocks(
     tmp_path: Path,
 ) -> None:
-    captured_requests: list[dict[str, object]] = []
+    captured_requests: list[dict[str, Any]] = []
 
     async def handler(request: httpx.Request) -> httpx.Response:
         captured_requests.append(json.loads(request.content.decode("utf-8")))
@@ -172,7 +212,7 @@ def test_ocr_route_uses_plain_text_mode_for_glm_ocr_and_splits_text_blocks(
 
 
 def test_ocr_route_can_force_prompt_mode_for_glm_ocr(tmp_path: Path) -> None:
-    captured_requests: list[dict[str, object]] = []
+    captured_requests: list[dict[str, Any]] = []
 
     async def handler(request: httpx.Request) -> httpx.Response:
         captured_requests.append(json.loads(request.content.decode("utf-8")))
@@ -212,7 +252,7 @@ def test_ocr_route_can_force_prompt_mode_for_glm_ocr(tmp_path: Path) -> None:
 
 
 def test_ocr_route_auto_mode_uses_plain_text_mode_for_glm_ocr(tmp_path: Path) -> None:
-    captured_requests: list[dict[str, object]] = []
+    captured_requests: list[dict[str, Any]] = []
 
     async def handler(request: httpx.Request) -> httpx.Response:
         captured_requests.append(json.loads(request.content.decode("utf-8")))
@@ -348,6 +388,35 @@ def test_ocr_route_rejects_images_over_10_mb() -> None:
     assert response.status_code == 413
     assert response.json()["error"]["code"] == "image_too_large"
     assert response.json()["error"]["stage"] == "ocr"
+
+
+def test_ocr_route_accepts_image_at_exact_10_mb_boundary(tmp_path: Path) -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"model": "gemma3:latest", "response": '{"blocks":[]}'})
+
+    ten_mb = 10 * 1024 * 1024
+    image_bytes = b"\x89PNG\r\n\x1a\n" + b"x" * (ten_mb - 8)
+    app.dependency_overrides[get_ollama_client] = lambda: OllamaClient(
+        transport=httpx.MockTransport(handler)
+    )
+    app.dependency_overrides[get_prompt_file_path] = lambda: tmp_path / "prompts.toml"
+
+    try:
+        response = TestClient(app).post(
+            "/api/ocr",
+            data={
+                "ollama_base_url": "http://ollama.test",
+                "ocr_model": "gemma3:latest",
+                "source_language_hint": "日文",
+                "timeout_seconds": "7",
+            },
+            files={"image": ("page.png", image_bytes, "image/png")},
+        )
+    finally:
+        app.dependency_overrides = {}
+
+    assert response.status_code == 200
+    assert response.json()["blocks"] == []
 
 
 def test_ocr_route_accepts_empty_blocks_result(tmp_path: Path) -> None:
@@ -589,6 +658,96 @@ def test_ocr_route_returns_model_request_failed_for_upstream_http_error(
     assert response.json()["error"]["stage"] == "ocr"
 
 
+def test_ocr_route_returns_unreachable_error_for_upstream_connection_error(
+    tmp_path: Path,
+) -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("Connection refused", request=request)
+
+    app.dependency_overrides[get_ollama_client] = lambda: OllamaClient(
+        transport=httpx.MockTransport(handler)
+    )
+    app.dependency_overrides[get_prompt_file_path] = lambda: tmp_path / "prompts.toml"
+
+    try:
+        response = TestClient(app).post(
+            "/api/ocr",
+            data={
+                "ollama_base_url": "http://ollama.test",
+                "ocr_model": "gemma3:latest",
+                "source_language_hint": "自動判斷",
+                "timeout_seconds": "7",
+            },
+            files={"image": ("page.png", b"\x89PNG\r\n\x1a\nsmall", "image/png")},
+        )
+    finally:
+        app.dependency_overrides = {}
+
+    assert response.status_code == 502
+    assert response.json()["error"]["code"] == "ollama_unreachable"
+    assert response.json()["error"]["stage"] == "ocr"
+
+
+def test_ocr_route_rejects_non_object_ollama_generate_payload_as_invalid_model_json(
+    tmp_path: Path,
+) -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=[])
+
+    app.dependency_overrides[get_ollama_client] = lambda: OllamaClient(
+        transport=httpx.MockTransport(handler)
+    )
+    app.dependency_overrides[get_prompt_file_path] = lambda: tmp_path / "prompts.toml"
+
+    try:
+        response = TestClient(app).post(
+            "/api/ocr",
+            data={
+                "ollama_base_url": "http://ollama.test",
+                "ocr_model": "gemma3:latest",
+                "source_language_hint": "自動判斷",
+                "timeout_seconds": "7",
+            },
+            files={"image": ("page.png", b"\x89PNG\r\n\x1a\nsmall", "image/png")},
+        )
+    finally:
+        app.dependency_overrides = {}
+
+    assert response.status_code == 502
+    assert response.json()["error"]["code"] == "invalid_model_json"
+    assert response.json()["error"]["stage"] == "ocr"
+
+
+def test_ocr_route_rejects_invalid_ollama_generate_json_body_as_invalid_model_json(
+    tmp_path: Path,
+) -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=b"not-json")
+
+    app.dependency_overrides[get_ollama_client] = lambda: OllamaClient(
+        transport=httpx.MockTransport(handler)
+    )
+    app.dependency_overrides[get_prompt_file_path] = lambda: tmp_path / "prompts.toml"
+
+    try:
+        response = TestClient(app).post(
+            "/api/ocr",
+            data={
+                "ollama_base_url": "http://ollama.test",
+                "ocr_model": "gemma3:latest",
+                "source_language_hint": "自動判斷",
+                "timeout_seconds": "7",
+            },
+            files={"image": ("page.png", b"\x89PNG\r\n\x1a\nsmall", "image/png")},
+        )
+    finally:
+        app.dependency_overrides = {}
+
+    assert response.status_code == 502
+    assert response.json()["error"]["code"] == "invalid_model_json"
+    assert response.json()["error"]["stage"] == "ocr"
+
+
 def test_ocr_route_returns_common_error_envelope_for_invalid_form_data() -> None:
     response = TestClient(app).post(
         "/api/ocr",
@@ -626,10 +785,11 @@ def test_ocr_upstream_task_is_cancelled_when_client_disconnects() -> None:
             timeout_seconds: float,
         ) -> dict[str, object]:
             try:
-                await asyncio.Future()
+                await asyncio.Future[None]()
             except asyncio.CancelledError:
                 self.cancelled = True
                 raise
+            raise AssertionError("generate should have been cancelled")
 
     request = DisconnectingRequest()
     ollama_client = HangingOllamaClient()
